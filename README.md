@@ -1,6 +1,6 @@
-# 极路由(HiWiFi) 离线ROOT + x3c8021x 插件分析
+# 路由器 802.1X 客户端逆向与跨平台重写
 
-> 目标设备：极路由4增强版 / B70 (HC5962)，固件 1.4.8.20462s（2017-12-21）
+> 目标设备：某品牌 MIPS 路由器，固件版本 1.4.8.x（2017 年）
 > 分析日期：2026-08-18
 > 前提：拥有路由器后台管理密码
 
@@ -17,12 +17,12 @@
 | `disasm/disasm.py` | capstone 反汇编脚本 |
 | `config/x3c8021x.config.example` | UCI 配置模板（凭据需自行填写） |
 | `config/x3c8021x.init` | 启动脚本备份（含完整命令行拼装逻辑） |
-| `scripts/hiwifi_offline_root.py` | 一键离线开 SSH（local_token→cloud_token） |
+| `scripts/router_open_ssh.py` | 一键离线开 SSH（local_token→cloud_token） |
 | `scripts/decode_version.py` | 反解 Base64 版本区（定位版本号的关键工具） |
 | `scripts/cloud_token.py` / `cloud_token2.py` | 开 SSH 中间版本（保留供参考） |
-| `scripts/main.go` | cloud_token 算法参考（imcdd/hiwifi-ssh-launcher） |
+| `scripts/main.go` | cloud_token 算法参考（某路由器 SSH 开启工具） |
 | `src/njit8021xclient/` | 同源开源项目源码（对照用） |
-| `reimpl/` | ★★重写版 C 源码（恢复 HiWiFi 全部参数，跨平台） |
+| `reimpl/` | ★★重写版 C 源码（恢复原厂全部参数，跨平台） |
 
 `reimpl/` 下不含预编译二进制，请 `make` 自行编译。详见 `reimpl/README.md`。
 
@@ -31,7 +31,7 @@
 > ★★ **认证已实网成功（2026-08-18）**。关键结论见第七章：本校（目标高校）需
 > ① EAPOL-Start 发往华三私有多播 `01:d0:f8:00:00:03`（**非**标准 `01:80:c2:00:00:03`）
 > ② EAP **type 0x07 明文密码**（非 MD5-Challenge）
-> ③ 版本号 **V7.xx-yyyy**（非极路由 WebUI 默认的 0548）
+> ③ 版本号 **V7.xx-yyyy**（非设备 WebUI 默认的 0548）
 > ④ Identity 不带 IP 属性（`-i 0`）
 > 四条全部靠 `-S` 抓 iNode 报文 + 反解 Base64 版本区定位，无一是猜出来的。
 
@@ -82,20 +82,20 @@ sudo ./x3c8021x-re -u <用户名> -p <密码> -I <网卡> -x 1 -m 0 -i 0 -v 1 \
 
 | 项目 | 值 |
 |---|---|
-| 型号 | HC5962（极路由4增强版 B70） |
-| 固件 | 1.4.8.20462s 171221-015119 |
+| 型号 | 某品牌 MIPS 路由器 |
+| 固件 | 1.4.8.x |
 | 架构 | MIPS mtmips_1004kc（MT7621） |
 | 内核 | Linux 3.10.49 (OpenWrt/Linaro GCC 4.8-2014.04) |
-| Web 服务 | QWS（极路由自家后端，非标准 LuCI） |
+| Web 服务 | 厂商私有后端（非标准 LuCI） |
 | 管理 IP | 192.168.199.1 |
 | WAN 接口 | eth3（该设备实测为厦门大学校园网 DHCP） |
 | 插件数据分区 | /tmp/cryptdata（mtdblock12, 35MB ubifs，加密分区） |
 
 ---
 
-## 二、极路由离线获取 Shell（免拆机）★核心经验
+## 二、路由器离线获取 Shell（免拆机）★核心经验
 
-极路由云平台已关停，无法走官方"开发者模式"。**离线 ROOT 原理**：路由器保留的 `/local-ssh/` 调试接口用 `cloud_token` 开启 22 端口，`cloud_token` 可由 `local_token` + `uuid` 本地计算（HMAC-SHA1，密钥=SHA1(uuid)），无需云端。
+该品牌云平台已关停，无法走官方"开发者模式"。**离线 ROOT 原理**：设备保留的 `/local-ssh/` 调试接口用 `cloud_token` 开启 22 端口，`cloud_token` 可由 `local_token` + `uuid` 本地计算（HMAC-SHA1，密钥=SHA1(uuid)），无需云端。
 
 ### 步骤
 
@@ -112,7 +112,7 @@ sudo ./x3c8021x-re -u <用户名> -p <密码> -I <网卡> -x 1 -m 0 -i 0 -v 1 \
    # data.uuid 字段，如 f692d022-9f8e-50f7-bfed-<路由器序列号/MAC>（固定）
    ```
 
-3. **本地计算 cloud_token**（无需 hiwifi.wtf 在线服务，该站已关闭）
+3. **本地计算 cloud_token**（无需任何在线服务）
    ```
    msg  = base64_decode(local_token) 取前3段(逗号分隔)拼接，且时间戳+1
    即   "<MAC>,ssh,<ts+1>"
@@ -140,7 +140,7 @@ sudo ./x3c8021x-re -u <用户名> -p <密码> -I <网卡> -x 1 -m 0 -i 0 -v 1 \
 
 ### 可复用脚本（Python + paramiko）
 
-见同目录 `hiwifi_offline_root.py`，一键完成 3/4 步（计算并提交 token）。
+见 `scripts/router_open_ssh.py`，一键完成 3/4 步（计算并提交 token）。
 
 ---
 
@@ -148,7 +148,7 @@ sudo ./x3c8021x-re -u <用户名> -p <密码> -I <网卡> -x 1 -m 0 -i 0 -v 1 \
 
 ### 3.1 是什么
 
-"华三认证" 入口在 Web 后台「互联网」菜单下，`/admin_web/plugin/hua_san`。其底层软件包为 **`x3c8021x`**，是极路由官方固件内置的 H3C iNode 802.1x 认证客户端。
+"华三认证" 入口在 Web 后台「互联网」菜单下，`/admin_web/plugin/hua_san`。其底层软件包为 **`x3c8021x`**，是该路由器固件内置的 H3C iNode 802.1x 认证客户端。
 
 | 项目 | 值 |
 |---|---|
@@ -255,9 +255,9 @@ dev_get_mac / dev_get_ip
 | `r70393861` | auth.c:581 `WinVersion` | Windows 版本号串 |
 | `EN V3.60-6208` | auth.c `H3C_VERSION` | 客户端版本格式 |
 
-**结论**：极路由官方基于开源 njit8021xclient 二次开发，编译打包成闭源 MIPS 二进制 `x3c8021x`，改名为"华三认证"插件。
+**结论**：原厂固件基于开源 njit8021xclient 二次开发，编译打包成闭源 MIPS 二进制 `x3c8021x`，打包成认证插件。
 
-> ⚠️ **注意：程序本体 ≠ 原版开源代码**。协议加密核心（H3C_KEY/H3C_KEY2、EAP 状态机、版本区 XOR 填充）完全一致，但**命令行接口是极路由工程师重写的**，并新增了大量可配置项：
+> ⚠️ **注意：程序本体 ≠ 原版开源代码**。协议加密核心（H3C_KEY/H3C_KEY2、EAP 状态机、版本区 XOR 填充）完全一致，但**命令行接口是原厂重写的**，并新增了大量可配置项：
 >
 > | | liuqun/njit8021xclient 原版 | x3c8021x 二进制 |
 > |---|---|---|
@@ -309,7 +309,7 @@ dev_get_mac / dev_get_ip
 ## 六、注意事项 / 安全提醒
 
 1. 临时 SSH 约 5 分钟失效；做永久开启前先执行 `dropbear enable`
-2. 极路由云停服后：原插件/App 均不可用，刷第三方固件（Padavan/OpenWrt）前**务必备份** mtd 分区（尤其 EEPROM 无线校准数据）
+2. 设备云停服后：原插件/App 均不可用，刷第三方固件（Padavan/OpenWrt）前**务必备份** mtd 分区（尤其 EEPROM 无线校准数据）
 3. x3c 配置中密码为明文存储在 `/etc/config/x3c8021x`，且 `get_x3c` 接口返回明文密码，注意网络访问控制
 4. 本机当前用户 `bio` 有 sudo；脚本依赖 paramiko（Python）
 ---
@@ -320,7 +320,7 @@ dev_get_mac / dev_get_ip
 
 ### 7.1 ★四项关键差异（全部实网验证通过）
 
-与开源原版 / 极路由默认配置的差异汇总：
+与开源原版 / 原厂默认配置的差异汇总：
 
 | # | 项目 | 原版/默认 | 本校实际 | 后果 |
 |---|---|---|---|---|

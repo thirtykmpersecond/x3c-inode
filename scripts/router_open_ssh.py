@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""极路由离线开启 SSH 22 端口（无需云端）。
+"""某品牌路由器离线开启 SSH 22 端口（无需云端）。
 
 原理：/local-ssh 调试接口的 cloud_token 由 local_token + uuid 本地计算。
-用法：python3 hiwifi_offline_root.py [router_ip]
+用法：python3 router_open_ssh.py [router_ip]
 成功后 5 分钟内 ssh root@<ip>（密码=后台管理密码）。
 """
 import base64, hashlib, hmac, json, subprocess, sys, time

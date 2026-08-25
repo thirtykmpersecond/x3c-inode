@@ -1,8 +1,8 @@
 # x3c8021x-re — H3C/iNode 802.1X 客户端（重写版）
 
-基于对极路由固件 `/usr/sbin/x3c8021x` 二进制的逆向分析，在开源
+基于对原厂路由器固件 `/usr/sbin/x3c8021x` 二进制的逆向分析，在开源
 [liuqun/njit8021xclient](https://github.com/liuqun/njit8021xclient) 协议核心
-之上重写，**恢复了 HiWiFi 版命令行接口与全部可配置项**，并跨平台支持
+之上重写，**恢复了原厂固件的命令行接口与全部可配置项**，并跨平台支持
 Linux / macOS / Windows。
 
 ## 与二进制的对应关系（逆向确认）

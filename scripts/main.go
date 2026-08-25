@@ -53,7 +53,7 @@ func main() {
 	var err error
 
 	for {
-		fmtPrint("请输入极路由管理IP，然后按回车继续(不输入则默认192.168.199.1): ")
+		fmtPrint("请输入路由器管理IP，然后按回车继续(不输入则默认192.168.199.1): ")
 
 		n, err = fmt.Scanln(&input)
 		if err != nil && err.Error() != "unexpected newline" {
@@ -72,7 +72,7 @@ func main() {
 		}
 
 		address = ip.String()
-		fmtPrintFln("极路由IP为: %s", address)
+		fmtPrintFln("路由器IP为: %s", address)
 		break
 	}
 
@@ -130,7 +130,7 @@ func launchSsh() {
 		return
 	}
 	fmtPrintFln("获取local_ssh出错，请检查IP是否有误，UUID，LocalToken是否正常获取")
-	fmtPrintFln("极路由IP为: %s", address)
+	fmtPrintFln("路由器IP为: %s", address)
 	fmtPrintFln("UUID为: %s", uuid)
 	fmtPrintFln("LocalToken为: %s", localToken)
 	fmtPrintFln("CloudToken为: %s", cloudToken)
