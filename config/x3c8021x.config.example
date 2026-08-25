@@ -1,0 +1,17 @@
+
+config base_set
+	option wanif 'eth3'
+	option enable '1'
+	option username 'YOUR_USERNAME'
+	option password 'YOUR_PASSWORD'
+
+config adv_set
+	option xorkey '1'
+	option mcast '0'
+	option ipcommit '1'
+	option vercommit '1'
+	option assitif 'br-lan'
+	option lang 'CH'
+	option privikey 'nil'
+	option ver 'V7.xx-yyyy'
+	option md5ver '0'

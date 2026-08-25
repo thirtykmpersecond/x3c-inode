@@ -1,0 +1,14 @@
+# 编译产物
+*.o
+reimpl/x3c8021x-re
+reimpl/x3c8021x-re-*
+reimpl/*.exe
+reimpl/*.log
+
+# 运行时日志
+*.log
+diag.log
+sniff.log
+
+# 真实配置（含凭据，勿提交）
+config/x3c8021x.config
