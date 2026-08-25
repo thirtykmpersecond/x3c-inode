@@ -1,17 +1,17 @@
 # x3c8021x-re — H3C/iNode 802.1X 客户端（重写版）
 
-基于对原厂路由器固件 `/usr/sbin/x3c8021x` 二进制的逆向分析，在开源
-[liuqun/njit8021xclient](https://github.com/liuqun/njit8021xclient) 协议核心
-之上重写，**恢复了原厂固件的命令行接口与全部可配置项**，并跨平台支持
+在开源
+[liuqun/njit8021xclient](https://github.com/liuqun/njit8021xclient)
+协议核心之上重写，**恢复了原厂 x3c8021x 的命令行接口与全部可配置项**，并跨平台支持
 Linux / macOS / Windows。
 
-## 与二进制的对应关系（逆向确认）
+## 命令行参数
 
-| 二进制命令行 | 本程序 | 含义 |
+| 参数 | 本程序字段 | 含义 |
 |---|---|---|
 | `-u` | username | 用户名 |
 | `-p` | password | 密码 |
-| `-I` | interface | 认证网卡（WAN，如 eth3） |
+| `-I` | interface | 认证网卡（上行口，如 eth0/en0） |
 | `-x` | xorkey | 0=老版密钥 `HuaWei3COM1X`，1=新版密钥 `Oly5D62FaE94W7` |
 | `-m` | mcast | 0=单播应答 1=多播应答（加入 `01:80:c2:00:00:03` 过滤） |
 | `-i` | ipcommit | 0/1 提交网卡 IP 给服务器 |
@@ -21,10 +21,10 @@ Linux / macOS / Windows。
 | `-M` | md5ver | 0=标准EAP-MD5，1=部分高校变体（需抓包确认） |
 | `-V` | version | 上报版本串，如 `CH\x11V7.xx-yyyy` 或 `CH V3.60-6208` |
 
-逆向确认的细节（均与源码对照）：
-- 内置默认版本串 `EN V3.60-6208`（不是 njit 的 `CH V3.60-6208`）。
-- Windows 版本区用 `r70393861` + XOR 填充（即 njit 注释掉的代码段）。
-- 日志串与二进制完全一致：`[0] Client: Start.`、`[%d] Server: Request Identity!` 等。
+实现要点（与上游 njit8021xclient 对照）：
+- 内置默认版本串 `EN V3.60-6208`（上游是 `CH V3.60-6208`）。
+- 版本区用 `r70393861` + XOR 填充（即上游注释掉的代码段）。
+- 日志串与原厂一致：`[0] Client: Start.`、`[%d] Server: Request Identity!` 等。
 - 标准 EAP-MD5 摘要 = MD5(id + 密码 + challenge)，不含 Value-Size 字节。
 
 ## 编译（跨平台）
@@ -109,12 +109,11 @@ Ctrl-C 会发送 EAPOL-Logoff 再退出。
 
 ## 注意事项（尚未完全还原的部分）
 
-1. **md5ver=1（部分高校变体）**：原二进制中未找到 AES-MD5 密钥与 privikey
-   默认串，说明它**不是** bitdust fork 的 h3c-AES-MD5 算法。本程序对 md5ver=1
-   按"密码先取 MD5 再参与摘要"实现（合理猜测），**未经实测**。
-2. **privikey 语义**：二进制总是由 init 传 `1234567890123456`，且二进制内
-   不含该串，是纯运行时参数。本程序实现为：显式设置非默认值则作为版本区
-   XOR 密钥；默认值 = 自动（用 xorkey 所选密钥）。
+1. **md5ver=1（部分高校变体）**：未确认其具体算法，不是 bitdust fork 的
+   h3c-AES-MD5。本程序对 md5ver=1 按"密码先取 MD5 再参与摘要"实现（合理猜测），
+   **未经实测**。
+2. **privikey 语义**：原厂总是由 init 脚本传 `1234567890123456`。本程序实现为：
+   显式设置非默认值则作为版本区 XOR 密钥；默认值 = 自动（用 xorkey 所选密钥）。
 3. **assitif**：按"取IP的辅助接口"实现；若为空则用 `-I` 网卡的 IP。
 4. **H3C 心跳保活**：部分部署在认证后发特征 `19 2b 44 2b 32` 的私有包，
    要求 3DES+双MD5 挑战应答（参考原版 `HandleKeepOnline`）。本程序仅打印

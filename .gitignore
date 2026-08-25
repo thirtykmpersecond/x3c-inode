@@ -10,5 +10,6 @@ reimpl/*.log
 diag.log
 sniff.log
 
-# 真实配置（含凭据，勿提交）
-config/x3c8021x.config
+# 本地凭据/配置（勿提交）
+*.conf.local
+x3c8021x.config
