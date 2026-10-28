@@ -50,7 +50,7 @@ jobs:
                CFLAGS="-O2 -Wall -Wextra -I/tmp/npcap-sdk/Include" \
                LIBS="-L/tmp/npcap-sdk/Lib/x64 -lwpcap -liphlpapi -lws2_32"
           mkdir -p ../dist
-          cp x3c8021x-re ../dist/x3c8021x-re-win64.exe
+          cp x3c8021x-re.exe ../dist/x3c8021x-re-win64.exe
       - name: 校验
         run: file dist/x3c8021x-re-win64.exe
       - uses: actions/upload-artifact@v4
@@ -59,7 +59,7 @@ jobs:
           path: dist/x3c8021x-re-win64.exe
 
   build-macos:
-    runs-on: macos-13             # Intel runner, 用 -arch 同时产出 arm64+x86_64
+    runs-on: macos-14             # arm64 runner, 用 -arch 同时产出 arm64+x86_64
     steps:
       - uses: actions/checkout@v4
       - name: 编译(通用二进制)

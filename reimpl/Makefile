@@ -9,9 +9,18 @@
 CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra
 NPCAP_DIR ?= /usr/local/npcap-sdk
-APP     := x3c8021x-re
 
 UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
+
+# MinGW 即使 -o 指定无后缀名, 输出也会被自动加上 .exe
+EXE :=
+ifeq ($(OS),Windows_NT)
+  EXE := .exe
+endif
+ifneq (,$(findstring mingw,$(CC)))
+  EXE := .exe
+endif
+APP     := x3c8021x-re$(EXE)
 
 ifeq ($(OS),Windows_NT)
   LIBS := -lwpcap -liphlpapi -lws2_32
@@ -39,6 +48,6 @@ md5.o: md5.c x3c.h
 compat.o: compat.c compat.h
 
 clean:
-	rm -f $(OBJS) $(APP)
+	rm -f $(OBJS) $(APP) *.exe
 
 .PHONY: all clean
