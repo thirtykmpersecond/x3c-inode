@@ -23,6 +23,17 @@ EAP type 0x07 明文密码、私有多播地址等）。
 
 ## 快速开始
 
+### 下载预编译版本
+
+GitHub Release 由 CI 自动构建（打 `v*` 标签触发），提供 Linux x86_64、
+Windows x64、macOS 通用二进制（arm64 + x86_64）及 SHA256 校验和：
+
+→ [Releases 页面](https://github.com/thirtykmpersecond/x3c-inode/releases)
+
+- Windows 仍需安装 [Npcap](https://npcap.com)（勾选 WinPcap API-compatible Mode）；
+- Linux 需系统自带 libpcap（多数发行版默认有，缺则 `sudo apt install libpcap0.8`）；
+- macOS 首次运行如被 Gatekeeper 拦截：`xattr -d com.apple.quarantine x3c8021x-re-macos-universal`。
+
 ### 编译
 
 **Linux**（需 libpcap）：

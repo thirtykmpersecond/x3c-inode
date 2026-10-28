@@ -1,0 +1,116 @@
+name: build-release
+
+# 打 v 开头的标签(如 v1.1.0)即自动三平台编译并发布 Release;
+# 也可在 Actions 页面手动 Run workflow(只产出构建产物, 不发 Release)。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04          # 老 glibc, 提高二进制发行兼容性
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: sudo apt-get update && sudo apt-get install -y libpcap-dev build-essential
+      - name: 编译
+        working-directory: reimpl
+        run: |
+          make
+          mkdir -p ../dist
+          cp x3c8021x-re ../dist/x3c8021x-re-linux-x86_64
+      - name: 校验
+        run: |
+          file dist/x3c8021x-re-linux-x86_64
+          ldd dist/x3c8021x-re-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x3c8021x-re-linux-x86_64
+          path: dist/x3c8021x-re-linux-x86_64
+
+  build-windows:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 MinGW 交叉工具链
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 unzip
+      - name: 获取 Npcap SDK
+        run: |
+          curl -fsSL -o /tmp/npcap-sdk.zip https://npcap.com/dist/npcap-sdk-1.13.zip
+          unzip -q /tmp/npcap-sdk.zip -d /tmp/npcap-sdk
+      - name: 交叉编译
+        working-directory: reimpl
+        run: |
+          make CC=x86_64-w64-mingw32-gcc \
+               CFLAGS="-O2 -Wall -Wextra -I/tmp/npcap-sdk/Include" \
+               LIBS="-L/tmp/npcap-sdk/Lib/x64 -lwpcap -liphlpapi -lws2_32"
+          mkdir -p ../dist
+          cp x3c8021x-re ../dist/x3c8021x-re-win64.exe
+      - name: 校验
+        run: file dist/x3c8021x-re-win64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x3c8021x-re-win64
+          path: dist/x3c8021x-re-win64.exe
+
+  build-macos:
+    runs-on: macos-13             # Intel runner, 用 -arch 同时产出 arm64+x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: 编译(通用二进制)
+        working-directory: reimpl
+        run: |
+          make CFLAGS="-O2 -Wall -Wextra -arch arm64 -arch x86_64"
+          mkdir -p ../dist
+          cp x3c8021x-re ../dist/x3c8021x-re-macos-universal
+      - name: 校验
+        run: |
+          file dist/x3c8021x-re-macos-universal
+          lipo -info dist/x3c8021x-re-macos-universal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x3c8021x-re-macos-universal
+          path: dist/x3c8021x-re-macos-universal
+
+  release:
+    # 只有打标签才发布 Release; 手动触发时上面三个构建仍会产出 artifact
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: 汇总产物并生成校验和
+        run: |
+          mkdir -p dist
+          cp artifacts/x3c8021x-re-linux-x86_64/x3c8021x-re-linux-x86_64 dist/
+          cp artifacts/x3c8021x-re-win64/x3c8021x-re-win64.exe dist/
+          cp artifacts/x3c8021x-re-macos-universal/x3c8021x-re-macos-universal dist/
+          chmod +x dist/x3c8021x-re-linux-x86_64 dist/x3c8021x-re-macos-universal
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/x3c8021x-re-linux-x86_64
+            dist/x3c8021x-re-win64.exe
+            dist/x3c8021x-re-macos-universal
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          body: |
+            ## 下载
+            - `x3c8021x-re-linux-x86_64`：Linux x86_64（需系统已装 libpcap，如 `sudo apt install libpcap0.8`）
+            - `x3c8021x-re-win64.exe`：Windows x64（需先安装 [Npcap](https://npcap.com) 并勾选 WinPcap API 兼容模式，以管理员身份运行）
+            - `x3c8021x-re-macos-universal`：macOS Apple Silicon + Intel（首次运行若被拦截：`xattr -d com.apple.quarantine x3c8021x-re-macos-universal`）
+            - `SHA256SUMS.txt`：各文件 SHA-256 校验和
+
+            用法见 README。
