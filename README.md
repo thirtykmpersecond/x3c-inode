@@ -11,7 +11,12 @@ EAP type 0x07 明文密码、私有多播地址等）。
 
 - 标准 EAP-MD5（type 0x04）与 H3C 私有 **EAP type 0x07 明文密码**两种认证方法
 - H3C 私有版本区：16 字节版本串 + 随机数，两轮 XOR 后 Base64 编码
+- **认证成功后自动催促 IPv6 配置**（`-6`，缺省开启）：检测到网卡只有
+  链路本地地址时发 ICMPv6 RS，必要时调用系统 DHCPv6 续租，解决认证放行
+  前 RS 被丢弃导致长时间拿不到 IPv6 的问题
 - 跨平台二层帧收发（Linux libpcap / macOS BPF / Windows Npcap）
+- 保活心跳日志精简：Success 后的周期性 Identity 轮询只输出点号，每 30 次
+  打一行汇总，长时间运行日志不再被刷屏
 - 丰富的排障选项：枚举网卡、十六进制转储、只监听抓包对比
 - V7 版本串分隔符 `0x11` 的命令行 `\xNN` 转义
 - Ctrl-C 自动发送 EAPOL-Logoff
@@ -75,6 +80,7 @@ sudo ./x3c8021x-re -u <用户名> -p <密码> -I <网卡> [选项]
 | `-A` | 辅助接口（从该口取 IP，可空） |
 | `-P` | 私钥（缺省 `1234567890123456` = 自动用 xorkey 所选密钥） |
 | `-M` | md5ver：0=标准 EAP-MD5，1=部分高校变体（需抓包确认） |
+| `-6` | v6kick：**0/1 认证成功后主动催促 IPv6（发 RS，必要时系统续租），缺省 1** |
 | `-V` | 上报版本串，如 `CH\x11V7.xx-yyyy`（`\x11` 由程序解析） |
 | `-l` | 枚举抓包设备与系统适配器 |
 | `-L file` | 输出写入日志文件 |
@@ -107,12 +113,44 @@ python3 scripts/decode_version.py '<抓包里的28字符Base64版本区>'
 用正确的 H3C 密钥会解出形如 `CH\x11V7.xx-yyyy` 的可读串；用错密钥则是乱码
 （这也能反过来验证 `-x` 取值）。
 
+## IPv6 支持
+
+抓包证实（H3C 校园网，iNode 拨号信息显示 IPv6=DHCPv6）：**iNode 从不在
+802.1X/EAPOL 报文中携带任何 IP 地址**，IPv6 绑定由交换机监听 DHCPv6 交互
+自动生成。因此客户端不需要、也不应该在认证报文中上送 IPv6 地址。
+
+实际问题是：认证放行前主机发出的 ICMPv6 路由器请求（RS）会被未认证端口
+丢弃，而网卡一直 up 时系统重试间隔很长，导致认证成功后长时间只有 `fe80`
+链路本地地址。`-6`（缺省开启）在收到 EAP Success 后执行非阻塞流程，
+不影响保活应答：
+
+1. 检测网卡是否已有非链路本地地址——全局单播 `2000::/3` 与 ULA
+   （`fc00::/7`）都算"已配置"，只有 `fe80::/10`（或无地址）才继续；
+2. 第 1/6/14 秒各注入一帧 ICMPv6 Router Solicitation（源地址取系统真实
+   链路本地地址，取不到时按 RFC 4861 用 `::` 且不带 SLLA 选项），网关
+   回 RA 后由**内核自己**完成 SLAAC/DHCPv6；
+3. 仍无地址则后台执行一次系统原生命令兜底（Windows `ipconfig /renew6`，
+   Linux 依次尝试 `rdisc6`/`dhclient -6`/`dhcpcd -6`，
+   macOS `ipconfig set <if> AUTOMATIC-V6`）；
+4. 40 秒仍无则放弃并提示该网络可能未部署 IPv6。
+
+不在用户态伪造 DHCPv6——租约由内核协议栈维护，伪造报文内核不会安装
+地址/DNS/路由。排障可设环境变量 `X3C_DUMPV6=1` 转储发出的 RS 原始帧，
+不需要此功能加 `-6 0`。实现细节见 [reimpl/README.md](reimpl/README.md)。
+
+## 日志
+
+认证握手阶段逐帧详细打印（加 `-d` 带十六进制转储）；Success 之后的周期性
+Identity 保活轮询只输出点号，每 30 次打一行 `[hb] 已应答 N 次保活`，
+Failure、私有数据、重新认证挑战等非心跳报文仍完整打印。
+
 ## 项目结构
 
 | 路径 | 说明 |
 |---|---|
 | `reimpl/` | ★ C 源码与 Makefile（核心） |
 | `reimpl/x3c.c` | main + 参数解析 + EAP 状态机 + 报文构建 |
+| `reimpl/ipv6.c/h` | 认证成功后的 IPv6 自动配置催促（检测→RS→系统续租） |
 | `reimpl/dev.c` | 取 MAC/IP（Linux ioctl / macOS getifaddrs / Windows GetAdaptersAddresses） |
 | `reimpl/md5.c` | 自包含 MD5（不依赖 OpenSSL） |
 | `reimpl/compat.c/h` | Windows 兼容层（自带 getopt_long） |

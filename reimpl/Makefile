@@ -24,7 +24,7 @@ ifneq ($(wildcard $(NPCAP_DIR)/Include),)
   LIBS   += -L$(NPCAP_DIR)/Lib/x64
 endif
 
-SRCS := x3c.c dev.c md5.c compat.c
+SRCS := x3c.c dev.c md5.c compat.c ipv6.c
 OBJS := $(SRCS:.c=.o)
 
 all: $(APP)
@@ -32,7 +32,8 @@ all: $(APP)
 $(APP): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIBS)
 
-x3c.o: x3c.c x3c.h compat.h
+x3c.o: x3c.c x3c.h ipv6.h compat.h
+ipv6.o: ipv6.c ipv6.h
 dev.o: dev.c x3c.h compat.h
 md5.o: md5.c x3c.h
 compat.o: compat.c compat.h

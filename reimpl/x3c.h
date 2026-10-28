@@ -27,6 +27,7 @@ typedef struct {
 	int  ipcommit;        /* -i 提交WAN口IP */
 	int  vercommit;       /* -v 提交版本号 */
 	int  md5ver;          /* -M 0=标准 1=部分高校 */
+	int  v6kick;          /* -6 认证成功后主动催促IPv6自动配置(RS+系统续租) */
 } x3c_cfg_t;
 
 void x3c_md5(const void *in, size_t len, uint8_t out[16]);

@@ -19,6 +19,7 @@ Linux / macOS / Windows。
 | `-A` | assitif | 辅助接口（设置后从此口取IP，可空） |
 | `-P` | privikey | 私钥，缺省 `1234567890123456`（=自动，用 xorkey 所选密钥） |
 | `-M` | md5ver | 0=标准EAP-MD5，1=部分高校变体（需抓包确认） |
+| `-6` | v6kick | 0/1 认证成功后主动催促 IPv6 自动配置（发 ICMPv6 RS，仍无地址则后台调用系统 DHCPv6 续租），缺省 1 |
 | `-V` | version | 上报版本串，如 `CH\x11V7.xx-yyyy` 或 `CH V3.60-6208` |
 
 实现要点（与上游 njit8021xclient 对照）：
@@ -119,12 +120,44 @@ Ctrl-C 会发送 EAPOL-Logoff 再退出。
    要求 3DES+双MD5 挑战应答（参考原版 `HandleKeepOnline`）。本程序仅打印
    该类包不做响应；若长时间运行后掉线，需要补这段逻辑。
 
+## 日志说明
+
+认证握手阶段（Success 之前）逐帧详细打印；加 `-d` 还会转储原始十六进制。
+**Success 之后的周期性 Identity 保活轮询只输出一个点号 `.`，每 30 次心跳
+打一行 `[hb] 已应答 N 次保活` 汇总**，不再逐帧转储，避免长时间运行时日志
+被心跳刷屏。Failure、私有数据、重新触发的认证挑战等非心跳报文仍完整打印。
+
+## IPv6（`-6`，缺省开启）
+
+抓包确认（H3C 校园网，iNode 拨号信息显示 IPv6=DHCPv6）：**iNode 从不在
+802.1X/EAPOL 报文中携带任何 IP 地址**。IPv6 绑定由交换机监听 DHCPv6 交互
+自动生成。认证放行前主机发的 RS 会被端口丢弃，而网卡一直 up 时系统重试
+很慢，导致认证成功后长时间拿不到 IPv6。
+
+本程序在收到 EAP Success 后执行非阻塞流程（不影响保活应答）：
+
+1. 立即检测网卡是否已配置非链路本地地址——全局单播 2000::/3 **和 ULA
+   （`fc00::/7`）都算"已配置"**，只有 `fe80::/10`（或无地址）才继续催促；
+2. 没有则在第 1/6/14 秒各注入一帧 ICMPv6 Router Solicitation
+   （源地址取系统真实链路本地地址，取不到时按 RFC4861 用 `::` 且不带
+   SLLA 选项），网关回 RA 后由内核自己完成 SLAAC/DHCPv6；
+3. Windows 实测在 IA 已 release 等状态下仅收到 RA 不会重启 DHCPv6，
+   因此第 10 秒（Linux/macOS 第 20 秒）仍只有链路本地地址时，后台执行一次
+   系统原生命令（Windows `ipconfig /renew6`，Linux 依次尝试
+   `rdisc6`/`dhclient -6`/`dhcpcd -6`，macOS `ipconfig set <if> AUTOMATIC-V6`）；
+4. 第 40 秒仍无则放弃并打印提示（该网络可能未部署 IPv6）。
+
+排障可设环境变量 `X3C_DUMPV6=1` 转储发出的 RS 原始帧。
+注意：**不**在用户态伪造 DHCPv6——租约由内核协议栈维护，伪造报文
+内核不会安装地址/DNS/路由。
+
 ## 文件
 
 | 文件 | 说明 |
 |---|---|
 | `x3c.c` | main + 参数解析 + 认证状态机 + 报文构建 |
 | `dev.c` | 取 MAC/IP（Linux ioctl / macOS getifaddrs / Windows GetAdaptersAddresses） |
+| `ipv6.c/h` | 认证成功后的 IPv6 自动配置催促：仅链路本地时发 ICMPv6 RS→必要时后台续租 |
 | `md5.c` | 自包含 MD5 + EAP-MD5 摘要（不依赖 openssl） |
 | `compat.c/h` | Windows 兼容层（自带 getopt_long） |
 | `x3c.h` | 配置结构与接口声明 |

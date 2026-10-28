@@ -10,6 +10,7 @@
  *   -A assitif  辅助接口(用于取IP,可空)
  *   -P privikey 私钥(缺省 1234567890123456 = 自动,用xorkey所选密钥)
  *   -M md5ver   0=标准EAP-MD5 1=部分高校变体(密码先MD5,需抓包确认)
+ *   -6 v6kick   0/1 认证成功后主动催促IPv6自动配置(发RS+系统续租,缺省1)
  *   -V version  上报版本串, 如 'CH\x11V7.xx-yyyy' 或 'CH V3.60-6208'
  *
  * 协议状态机与报文格式与 njit8021xclient 一致,
@@ -31,6 +32,7 @@
 #endif
 #include <pcap.h>
 #include "x3c.h"
+#include "ipv6.h"
 #include "compat.h"
 
 /* 原二进制会把认证过程打印到 stderr(init 重定向到日志文件), 故默认开启日志;
@@ -145,10 +147,11 @@ static void send_logoff_pkt(pcap_t *h, const uint8_t mac[6])
 	DPRINTF(">>Client: Logoff.\n");
 }
 
-/* Response Identity: [0x15 IP][0x06 版本][2空格][用户名] */
+/* Response Identity: [0x15 IP][0x06 版本][2空格][用户名]
+ * verbose=0 用于认证后的周期性保活应答(不转储, 避免日志刷屏) */
 static void send_response_identity(pcap_t *h, const uint8_t req[],
 	const uint8_t ethhdr[], const uint8_t ip[4],
-	const x3c_cfg_t *cfg)
+	const x3c_cfg_t *cfg, int verbose)
 {
 	uint8_t r[128];
 	uint16_t eaplen;
@@ -174,7 +177,8 @@ static void send_response_identity(pcap_t *h, const uint8_t req[],
 	eaplen = htons(i-18);
 	memcpy(r+16, &eaplen, 2);
 	memcpy(r+20, &eaplen, 2);
-	hexdump("TX Response-Identity", r, (unsigned)i);
+	if (verbose)
+		hexdump("TX Response-Identity", r, (unsigned)i);
 	pcap_sendpacket(h, r, i);
 }
 
@@ -473,6 +477,12 @@ int x3c_authenticate(const x3c_cfg_t *cfg)
 	pcap_t *h;
 	uint8_t mac[6];
 	const char *capdev;
+	x3c_v6kick_t v6;
+	int authenticated = 0;      /* 收到过 Success: 之后的 Identity 轮询算心跳 */
+	unsigned hb_total = 0;      /* 累计心跳应答次数 */
+	int hb_dots = 0;            /* 当前行上是否有未换行的心跳/空转点号 */
+
+	x3c_v6kick_init(&v6, cfg->v6kick);
 
 	printf("[0] auth: iface='%s' assoif='%s'\n", cfg->iface, cfg->assitif);
 #ifdef _WIN32
@@ -521,6 +531,10 @@ START_AUTHENTICATION:
 		uint8_t ethhdr[14] = {0};
 		uint8_t ip[4] = {0};
 
+		x3c_v6kick_reset(&v6);
+		authenticated = 0;
+		hb_total = 0;
+		hb_dots = 0;
 		send_start_pkt(h, mac);
 		DPRINTF("[0] Client: Start.\n");
 
@@ -545,7 +559,7 @@ START_AUTHENTICATION:
 		if ((eap_type_t)cap[22] == EAP_IDENTITY) {
 			DPRINTF("[%d] Server: Request Identity!\n", cap[19]);
 			if (cfg->ipcommit) x3c_get_ip(ip, ip_iface(cfg));
-			send_response_identity(h, cap, ethhdr, ip, cfg);
+			send_response_identity(h, cap, ethhdr, ip, cfg, 1);
 			DPRINTF("[%d] Client: Response Identity.\n", cap[19]);
 		}
 
@@ -560,21 +574,45 @@ START_AUTHENTICATION:
 			while (pcap_next_ex(h, &header, &cap) != 1) {
 				DPRINTF(".");
 				/* 读超时已是1s, 这里不再额外sleep */
+				x3c_v6kick_tick(&v6, h, mac, capdev);
 				if (++idle > 15) {
-					DPRINTF("\nWait for handshake package timed out...\n");
+					if (hb_dots) { DPRINTF("\n"); hb_dots = 0; }
+					DPRINTF("Wait for handshake package timed out...\n");
 					goto START_AUTHENTICATION;
 				}
 			}
-			if (idle) DPRINTF("\n");
-			hexdump("RX", cap, header->caplen);
+			if (idle) { DPRINTF("\n"); hb_dots = 0; }
+			/* Success 后的周期性 Identity 轮询即"心跳", 简化输出 */
+			int is_hb = authenticated &&
+				(eap_code_t)cap[18] == EAP_REQUEST &&
+				(eap_type_t)cap[22] == EAP_IDENTITY;
+			if (!is_hb && hb_dots) { DPRINTF("\n"); hb_dots = 0; }
+			if (!is_hb)
+				hexdump("RX", cap, header->caplen);
 
 			if ((eap_code_t)cap[18] == EAP_REQUEST) {
 				switch ((eap_type_t)cap[22]) {
 				case EAP_IDENTITY:
-					DPRINTF("[%d] Server: Request Identity!\n", cap[19]);
-					if (cfg->ipcommit) x3c_get_ip(ip, ip_iface(cfg));
-					send_response_identity(h, cap, ethhdr, ip, cfg);
-					DPRINTF("[%d] Client: Response Identity.\n", cap[19]);
+					if (authenticated) {
+						/* 保活心跳: 点号表示一次应答, 每30次打一行汇总 */
+						if (cfg->ipcommit) x3c_get_ip(ip, ip_iface(cfg));
+						send_response_identity(h, cap, ethhdr, ip,
+								       cfg, 0);
+						DPRINTF("."); hb_dots = 1;
+						if (++hb_total % 30 == 0) {
+							DPRINTF(" [hb] 已应答 %u 次保活\n",
+								hb_total);
+							hb_dots = 0;
+						}
+					} else {
+						DPRINTF("[%d] Server: Request Identity!\n",
+							cap[19]);
+						if (cfg->ipcommit) x3c_get_ip(ip, ip_iface(cfg));
+						send_response_identity(h, cap, ethhdr, ip,
+								       cfg, 1);
+						DPRINTF("[%d] Client: Response Identity.\n",
+							cap[19]);
+					}
 					break;
 				case EAP_AVAILABLE:
 					DPRINTF("[%d] Server: Request AVAILABLE!\n", cap[19]);
@@ -619,11 +657,17 @@ START_AUTHENTICATION:
 				}
 			} else if ((eap_code_t)cap[18] == EAP_SUCCESS) {
 				DPRINTF("[%d] Server: Success.\n", cap[19]);
+				authenticated = 1;
+				hb_total = 0;
+				hb_dots = 0;
+				x3c_v6kick_start(&v6);
+				x3c_v6kick_tick(&v6, h, mac, capdev);
 			} else {
 				DPRINTF("[%d] Server: (H3C private data) "
 					"%02x %02x %02x %02x %02x\n", cap[19],
 					cap[22], cap[23], cap[24], cap[25], cap[26]);
 			}
+			x3c_v6kick_tick(&v6, h, mac, capdev);
 		}
 	}
 }
@@ -642,6 +686,7 @@ static void usage(const char *prog)
 		"  -A assitif   辅助接口(用于取IP,可空)\n"
 		"  -P privikey  私钥(缺省自动)\n"
 		"  -M md5ver    0=标准EAP-MD5 1=部分高校变体(需抓包确认)\n"
+		"  -6 v6kick    0/1 认证成功后主动催促IPv6(发RS,必要时系统续租,缺省1)\n"
 		"  -V version   上报版本串, 如 'CH\\x11V7.30-0548' 或 'CH V3.60-6208'\n"
 		"  -l 枚举抓包设备(先运行此参数查看 -I 应填什么)\n"
 		"  -L file 把输出写入日志文件\n"
@@ -674,8 +719,9 @@ int main(int argc, char *argv[])
 	cfg.xorkey = 1;
 	cfg.ipcommit = 1;
 	cfg.vercommit = 1;
+	cfg.v6kick = 1;
 
-	while ((c = getopt_long(argc, argv, "u:p:I:x:m:i:v:A:P:M:V:hL:ldS",
+	while ((c = getopt_long(argc, argv, "u:p:I:x:m:i:v:A:P:M:6:V:hL:ldS",
 			 (const struct option[]){
 				{"username",  required_argument, 0, 'u'},
 				{"password",  required_argument, 0, 'p'},
@@ -687,6 +733,7 @@ int main(int argc, char *argv[])
 				{"assitif",   required_argument, 0, 'A'},
 				{"privikey",  required_argument, 0, 'P'},
 				{"md5ver",    required_argument, 0, 'M'},
+				{"ipv6kick",  required_argument, 0, '6'},
 				{"version",   required_argument, 0, 'V'},
 				{"help",      no_argument,       0, 'h'},
 				{"list",      no_argument,       0, 'l'},
@@ -706,6 +753,7 @@ int main(int argc, char *argv[])
 		case 'A': strncpy(cfg.assitif,  optarg, sizeof(cfg.assitif)-1);  break;
 		case 'P': strncpy(cfg.privikey, optarg, sizeof(cfg.privikey)-1); break;
 		case 'M': cfg.md5ver = atoi(optarg); break;
+		case '6': cfg.v6kick = atoi(optarg); break;
 		case 'V': unescape(cfg.version, sizeof(cfg.version), optarg); break;
 		case 'L': strncpy(g_logfile, optarg, sizeof(g_logfile)-1); break;
 		case 'd': g_dump = 1; break;
