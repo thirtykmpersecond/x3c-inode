@@ -120,8 +120,13 @@ Base64 -> 20 字节
 - Windows 没有 getopt_long，自带了一份兼容实现。
 - 取 MAC/IP 在三个平台用不同 API：Linux ioctl、macOS getifaddrs、
   Windows GetAdaptersAddresses。
-- 控制台需正确处理 UTF-8 与无缓冲输出。
-- pcap 读超时设短（1s），否则 Ctrl-C 响应迟钝。
+- 控制台需正确处理零缓冲输出（`setvbuf(_IONBF)`，否则点号迟迟不显示）。
+- **不要依赖 pcap 读超时做秒表**：零流量时它是否生效是平台相关的——
+  macOS BPF / Linux TPACKET_V2 到点返回 0；Linux TPACKET_V3（libpcap≥1.5
+  默认）和 Windows Npcap 可能无限阻塞。v1.1.1 起用各平台原生可等待对象
+  自持 1s 计时：POSIX `pcap_get_selectable_fd()`+`poll()`，
+  Windows `pcap_getevent()`+`WaitForSingleObject()`。
+  pcap 自身的 1s 读超时仍保留作退化路径，但不再承担主计时器。
 
 ## 六、版本区反解脚本
 

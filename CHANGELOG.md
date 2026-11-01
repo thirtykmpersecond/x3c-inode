@@ -2,6 +2,51 @@
 
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1-rc.1] - 2026-11-01
+
+### 修复
+- **从根本上修复 macOS / 新 Linux 认证成功后反复全量重认证的问题**。原代码把
+  "连续 15 次 `pcap_next_ex` 读超时无报文"当作掉线判据，但零流量时的 libpcap
+  读超时是平台相关行为（本机实验确认）：
+  - macOS BPF、Linux TPACKET_V2（旧版 libpcap）：到点返回 0；
+  - **Linux TPACKET_V3（libpcap ≥ 1.5 的默认，覆盖当前主流发行版；本机
+    libpcap 1.10.4 零流量实测阻塞超过 8 秒不返回）、Windows Npcap：首个报文
+    到来前定时器不走，可能无限阻塞**。
+  
+  于是同一个"15 次超时"判据：在 macOS/旧 Linux 上每 ~15 秒误判掉线触发一次
+  全量重认证（日志反复 `Wait for handshake package timed out...`）；在
+  Windows/新 Linux 上则因阻塞"碰巧正常"，但真掉线时又**永远检测不到**。
+- 新增跨平台可中断等待函数 `x3c_wait_frame()`（`reimpl/x3c.c`）：POSIX 侧
+  用 `pcap_get_selectable_fd()` + `poll()`，Windows 侧用
+  `pcap_getevent()` + `WaitForSingleObject()`，**自持 1 秒粒度计时，不再
+  依赖平台相关的 libpcap 读超时**——静默看门狗与 `-6` IPv6 催促的秒表在
+  三平台一致工作（`x3c_wait_frame` 取不到可等待句柄时才退回 `pcap_next_ex`，
+  此时该平台的静默计时会失效，注释中已明确说明这一退化路径）。
+- 认证成功后的静默重连阈值放宽到 **180 秒**（有线 802.1X 无客户端侧心跳要求，
+  多数 H3C 网络 Success 后报文本就稀疏，不能据短暂无帧判掉线；交换机主动
+  重认证会直接发 Identity 请求，照常应答不耽误）；**握手阶段仍为 15 秒**；
+  认证后的静默期不再输出点号。
+- 抓包句柄读错误（`pcap_next_ex` 返回 -1，如网卡被拔出/链路异常）此前被当成
+  静默空转，会在不重建句柄的情况下 goto 回 Start 忙等重发 Start；现直接打印
+  `pcap_geterr()` 错误后退出，交由外部（终端/procd 等）重启。
+- 同样的等待与错误处理用于 Start 等待循环，Windows/Npcap 现在也会每秒重发
+  一次 EAPOL-Start（此前零响应时只发一帧后无限阻塞）。
+
+### 工程
+- Release CI：标签名带预发行后缀（标签含 `-`，如 `v1.1.1-rc.1`）时自动将
+  Release 标记为 prerelease（`.github/workflows/release.yml`）。
+
+### 验证
+- Linux（Ubuntu 24.04，TPACKET_V3）零流量 dummy 口实测：新代码稳定每秒
+  1 个 tick、约每 12 秒一轮 Start 重试；旧代码在此环境下阻塞、计时完全不走动。
+- 当前环境 `-Wall -Wextra` 编译零警告。
+
+### 已知限制
+- 180 秒静默判据仍是"无帧"启发式而非链路载波检测；极个别 Success 后永久静默
+  且不允许重认证的网络可把该值调大（暂为硬编码，后续可做成命令行选项）。
+- `-S` 只监听模式仍直接用 `pcap_next_ex`，在 BPF 平台零流量时可能忙等，
+  仅排障用，暂不改动。
+
 ## [1.1.0] - 2026-10-28
 
 ### 功能
@@ -59,5 +104,6 @@
 - `-M 1`（部分高校变体）为推测实现，未经实网验证。
 - Linux 分支未经真实 H3C 网络验证。
 
+[1.1.1-rc.1]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.1
 [1.1.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.0
 [1.0.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.0.0

@@ -33,7 +33,8 @@ void x3c_v6kick_reset(x3c_v6kick_t *st);
 /* 收到 EAP Success 时调用: 开始计时与检测 */
 void x3c_v6kick_start(x3c_v6kick_t *st);
 
-/* 主循环每次迭代调用一次(读超时约 1s, 非阻塞, 内部自行节流) */
+/* 主循环每约 1s 调用一次(由 x3c_wait_frame 的 poll/event 超时保证,
+ * 不依赖平台相关的 libpcap 读超时; 非阻塞, 内部按时间戳自行节流) */
 void x3c_v6kick_tick(x3c_v6kick_t *st, pcap_t *h,
 		     const uint8_t mac[6], const char *dev);
 
