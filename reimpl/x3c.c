@@ -29,6 +29,8 @@
 #ifndef _WIN32
 #include <getopt.h>
 #include <arpa/inet.h>
+#include <poll.h>
+#include <errno.h>
 #endif
 #include <pcap.h>
 #include "x3c.h"
@@ -469,6 +471,60 @@ static void on_sigint(int sig)
 	exit(0);
 }
 
+/* 跨平台"等待一帧, 最多 timeout_ms"。
+ * 返回值与 pcap_next_ex 相同: 1=收到报文, 0=超时无报文, -1=错误。
+ *
+ * 不能直接依赖 pcap_open_live 的读超时做秒表: 零流量时该超时是否生效是
+ * 平台相关的——
+ *   macOS BPF:                          到点返回 0;
+ *   Linux + TPACKET_V2 (旧版 libpcap):  到点返回 0;
+ *   Linux + TPACKET_V3 (libpcap>=1.5
+ *     默认, 含当前主流发行版):          首个报文到来前定时器不走, 无限阻塞
+ *                                       (本机 libpcap 1.10.4 实测确认);
+ *   Windows Npcap/WinPcap:              同样可能在零流量时一直阻塞。
+ * 因此用各平台原生可等待对象自持超时:
+ *   POSIX   -> pcap_get_selectable_fd() + poll();
+ *   Windows -> pcap_getevent() + WaitForSingleObject()。
+ * 取不到可等待对象时退回 pcap_next_ex (该环境下调用方的静默计时会失效)。 */
+static int x3c_wait_frame(pcap_t *h, struct pcap_pkthdr **hdr,
+			  const u_char **pkt, int timeout_ms)
+{
+#ifdef _WIN32
+	HANDLE ev = pcap_getevent(h);
+	if (ev != NULL) {
+		DWORD wr = WaitForSingleObject(ev, (DWORD)timeout_ms);
+		if (wr == WAIT_TIMEOUT)
+			return 0;
+		if (wr != WAIT_OBJECT_0)
+			return -1;
+		return pcap_next_ex(h, hdr, pkt);
+	}
+#else
+	int fd = pcap_get_selectable_fd(h);
+	if (fd >= 0) {
+		for (;;) {
+			struct pollfd pfd;
+			int pr;
+			pfd.fd = fd;
+			pfd.events = POLLIN;
+			pfd.revents = 0;
+			pr = poll(&pfd, 1, timeout_ms);
+			if (pr == 0)
+				return 0;                       /* 超时 */
+			if (pr < 0) {
+				if (errno == EINTR)
+					continue;               /* 被信号打断 */
+				return -1;
+			}
+			if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+				return -1;                      /* 句柄失效 */
+			return pcap_next_ex(h, hdr, pkt);
+		}
+	}
+#endif
+	return pcap_next_ex(h, hdr, pkt);
+}
+
 int x3c_authenticate(const x3c_cfg_t *cfg)
 {
 	char errbuf[PCAP_ERRBUF_SIZE];
@@ -539,7 +595,12 @@ START_AUTHENTICATION:
 		DPRINTF("[0] Client: Start.\n");
 
 		for (;;) {
-			int rc = pcap_next_ex(h, &header, &cap);
+			int rc = x3c_wait_frame(h, &header, &cap, 1000);
+			if (rc < 0) {
+				fprintf(stderr, "抓包读取失败: %s\n",
+					pcap_geterr(h));
+				return -1;
+			}
 			if (rc == 1) hexdump("RX(start-wait)", cap, header->caplen);
 			if (rc == 1 && (eap_code_t)cap[18] == EAP_REQUEST)
 				break;
@@ -571,17 +632,41 @@ START_AUTHENTICATION:
 
 		for (;;) {
 			int idle = 0;
-			while (pcap_next_ex(h, &header, &cap) != 1) {
-				DPRINTF(".");
-				/* 读超时已是1s, 这里不再额外sleep */
-				x3c_v6kick_tick(&v6, h, mac, capdev);
-				if (++idle > 15) {
+			/* 静默重连阈值(每次 x3c_wait_frame 超时=1s):
+			 * 未认证的握手阶段 15s 无响应即重发 Start 重试;
+			 * 认证成功后放宽到 180s: 有线 802.1X 无客户端侧
+			 * 心跳要求, 很多 H3C 网络 Success 后只有稀疏的
+			 * Identity 轮询/私有报文(间隔可达 30s 以上甚至更长),
+			 * 不能据短暂无帧判定掉线; 交换机主动重认证会直接
+			 * 发来 Identity 请求, 照常应答即可。
+			 * 计时基于自管的 poll/event 等待(x3c_wait_frame),
+			 * 三平台一致, 不再赌 libpcap 读超时的平台行为。 */
+			const int idle_limit = authenticated ? 180 : 15;
+			int rc;
+			while ((rc = x3c_wait_frame(h, &header, &cap, 1000)) != 1) {
+				if (rc < 0) {
 					if (hb_dots) { DPRINTF("\n"); hb_dots = 0; }
-					DPRINTF("Wait for handshake package timed out...\n");
+					fprintf(stderr, "抓包读取失败: %s\n",
+						pcap_geterr(h));
+					return -1;
+				}
+				/* 认证后的静默期不刷点号, 避免无报文时空转刷屏 */
+				if (!authenticated)
+					DPRINTF(".");
+				/* 每次超时=真实的约 1s 间隔(自管计时器) */
+				x3c_v6kick_tick(&v6, h, mac, capdev);
+				if (++idle >= idle_limit) {
+					if (hb_dots) { DPRINTF("\n"); hb_dots = 0; }
+					if (authenticated)
+						DPRINTF("服务器长时间无报文(%ds), "
+							"重新发起认证...\n", idle_limit);
+					else
+						DPRINTF("Wait for handshake package "
+							"timed out...\n");
 					goto START_AUTHENTICATION;
 				}
 			}
-			if (idle) { DPRINTF("\n"); hb_dots = 0; }
+			if (idle && !authenticated) { DPRINTF("\n"); hb_dots = 0; }
 			/* Success 后的周期性 Identity 轮询即"心跳", 简化输出 */
 			int is_hb = authenticated &&
 				(eap_code_t)cap[18] == EAP_REQUEST &&

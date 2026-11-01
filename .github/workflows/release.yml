@@ -1,6 +1,7 @@
 name: build-release
 
 # 打 v 开头的标签(如 v1.1.0)即自动三平台编译并发布 Release;
+# 标签带预发行后缀(含'-', 如 v1.2.0-rc.1 / v2.0.0-beta.1)则标记为 prerelease;
 # 也可在 Actions 页面手动 Run workflow(只产出构建产物, 不发 Release)。
 on:
   push:
@@ -106,6 +107,8 @@ jobs:
             dist/x3c8021x-re-macos-universal
             dist/SHA256SUMS.txt
           generate_release_notes: true
+          # 语义化版本预发行标识在 '-' 之后(rc/beta/alpha), 据此自动判定
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             ## 下载
             - `x3c8021x-re-linux-x86_64`：Linux x86_64（需系统已装 libpcap，如 `sudo apt install libpcap0.8`）
