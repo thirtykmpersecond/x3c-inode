@@ -441,6 +441,11 @@ static int sniff_eapol(const x3c_cfg_t *cfg)
 		fprintf(stderr, "pcap_open_live: %s\n", errbuf);
 		return -1;
 	}
+#ifdef _WIN32
+	/* 用 pcap_getevent() 等待前必须设 mintocopy=0: Npcap 内核缓冲默认
+	 * 攒满 16KB 才置位读事件, 60 字节的稀疏 EAPOL 帧会被拖延数分钟 */
+	pcap_setmintocopy(h, 0);
+#endif
 	if (x3c_get_mac(mac, capdev) < 0) {
 		fprintf(stderr, "get MAC failed for '%s'\n", capdev);
 		return -1;
@@ -485,7 +490,11 @@ static void on_sigint(int sig)
  * 因此用各平台原生可等待对象自持超时:
  *   POSIX   -> pcap_get_selectable_fd() + poll();
  *   Windows -> pcap_getevent() + WaitForSingleObject()。
- * 取不到可等待对象时退回 pcap_next_ex (该环境下调用方的静默计时会失效)。 */
+ * 取不到可等待对象时退回 pcap_next_ex (该环境下调用方的静默计时会失效)。
+ *
+ * Windows 前置条件: pcap_open_live 后必须 pcap_setmintocopy(h, 0)。
+ * 否则 Npcap 内核缓冲默认攒满 16KB 才置位读事件, EAPOL 这种几十字节的
+ * 稀疏帧会被拖延数分钟才读到(rc.2 实网踩中: 认证要 3 分钟、挑战帧超时)。 */
 static int x3c_wait_frame(pcap_t *h, struct pcap_pkthdr **hdr,
 			  const u_char **pkt, int timeout_ms)
 {
@@ -553,6 +562,11 @@ int x3c_authenticate(const x3c_cfg_t *cfg)
 		fprintf(stderr, "pcap_open_live: %s\n", errbuf);
 		return -1;
 	}
+#ifdef _WIN32
+	/* 用 pcap_getevent() 等待前必须设 mintocopy=0: Npcap 内核缓冲默认
+	 * 攒满 16KB 才置位读事件, 60 字节的稀疏 EAPOL 帧会被拖延数分钟 */
+	pcap_setmintocopy(h, 0);
+#endif
 	printf("[0] auth: pcap_open_live ok\n");
 	fflush(stderr);
 	if (x3c_get_mac(mac, capdev) < 0) {

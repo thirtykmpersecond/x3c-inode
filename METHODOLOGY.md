@@ -127,6 +127,10 @@ Base64 -> 20 字节
   自持 1s 计时：POSIX `pcap_get_selectable_fd()`+`poll()`，
   Windows `pcap_getevent()`+`WaitForSingleObject()`。
   pcap 自身的 1s 读超时仍保留作退化路径，但不再承担主计时器。
+- **Windows event 等待必须配 `pcap_setmintocopy(h, 0)`**（rc.2 实网踩坑，
+  rc.3 修复）：Npcap 内核缓冲默认攒满 16KB 才置位读事件，EAPOL 这种
+  几十字节的稀疏帧会被拖延数分钟。该设置要在 `pcap_open_live` 成功后
+  立即调用。
 
 ## 六、版本区反解脚本
 

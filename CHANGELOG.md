@@ -2,10 +2,25 @@
 
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1-rc.3] - 2026-11-02
+
+### 修复
+- **修复 rc.2 在 Windows/Npcap 上实网认证基本不可用的回归**：rc.2 改用
+  `pcap_getevent()` + `WaitForSingleObject()` 等待报文，但**没有同时设置
+  `pcap_setmintocopy(h, 0)`**。Npcap 内核缓冲默认要攒满 16KB 才置位读事件，
+  802.1X 这种几十字节的稀疏帧可能数分钟才被读到一次——实网表现为首个
+  Request Identity 要约 3 分钟才出现，密码/MD5 挑战帧在 15s 握手窗口内
+  永远等不到，反复 `Wait for handshake package timed out`。
+  现 `pcap_open_live` 成功后立即在 Windows 上调用 `pcap_setmintocopy(h, 0)`
+  （每帧到达即置位事件），恢复 rc.2 之前的即时收发。
+- rc.2 的自管计时器（POSIX poll / Windows event）设计保留，仅补齐其
+  Windows 前置条件。
+
 ## [1.1.1-rc.2] - 2026-11-01
 
 > rc.1 标签因强移导致 GitHub Release 残留半残（0 附件、无法被 action 更新），
-> 未正式发布即作废，改发 rc.2；二进制以 rc.2 为准。
+> 未正式发布即作废，改发 rc.2。rc.2 后又发现 Windows mintocopy 回归（见
+> rc.3），**Windows 用户请直接使用 rc.3**。
 
 ### 修复
 - **从根本上修复 macOS / 新 Linux 认证成功后反复全量重认证的问题**。原代码把
@@ -107,6 +122,7 @@
 - `-M 1`（部分高校变体）为推测实现，未经实网验证。
 - Linux 分支未经真实 H3C 网络验证。
 
+[1.1.1-rc.3]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.3
 [1.1.1-rc.2]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.2
 [1.1.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.0
 [1.0.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.0.0
