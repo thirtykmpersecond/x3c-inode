@@ -131,6 +131,11 @@ Base64 -> 20 字节
   rc.3 修复）：Npcap 内核缓冲默认攒满 16KB 才置位读事件，EAPOL 这种
   几十字节的稀疏帧会被拖延数分钟。该设置要在 `pcap_open_live` 成功后
   立即调用。
+- **DHCPv6 续租兜底不要和系统客户端抢 UDP6 546**（rc.4，Ubuntu 24.04 Live
+  实网日志）：系统已跑 dhcpcd 时再 fork 一个会 `Address already in use`
+  并打出吓人的 `timed out`。fork 前读 `/proc/net/udp6` 看本地 `:0222`
+  是否已监听，已监听则只发 RS；外部命令子进程的 stdout/stderr 默认丢
+  `/dev/null`（需要时用环境变量放行），避免污染本程序日志。
 
 ## 六、版本区反解脚本
 

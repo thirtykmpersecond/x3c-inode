@@ -7,7 +7,8 @@
  *        网关回 RA 后内核自己完成 SLAAC/DHCPv6
  *     -> 第 10/20 秒仍只有链路本地地址, 后台调用系统原生命令续租一次:
  *          Windows: ipconfig /renew6
- *          Linux:   rdisc6 / dhclient -6 / dhcpcd(按可用性)
+ *          Linux:   rdisc6 / dhclient -6 / dhcpcd(按可用性; 若检测到
+ *                   系统 DHCPv6 客户端已占用 UDP6 546 则跳过, 仅靠 RS)
  *          macOS:   ipconfig set <iface> AUTOMATIC-V6
  *     -> 第 50 秒仍无则放弃(该网络可能未部署 IPv6)
  *
@@ -27,6 +28,7 @@
 #else
 #include <unistd.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <ifaddrs.h>
@@ -295,6 +297,39 @@ static void spawn_renew(const char *dev)
 		printf("[v6] 已在后台执行: %s\n", cmd);
 	}
 #else
+	/* 系统是否已有 DHCPv6 客户端在监听 UDP6 546?
+	 * 读 /proc/net/udp6: 第 2 列 local_address 形如
+	 * "0000...0000:0222"(546 = 0x0222)。已被 dhcpcd/dhclient/
+	 * systemd-networkd 等占用时, 再 fork dhcpcd/dhclient 只会
+	 * Address already in use 并污染控制台; 此时 RS 已足够——
+	 * 系统客户端收到 RA 会自己跑 DHCPv6。 */
+	int have_client = 0;
+	{
+		char want[8];
+		char line[512];
+		FILE *pf;
+		snprintf(want, sizeof(want), ":%04X", 546);
+		pf = fopen("/proc/net/udp6", "r");
+		if (pf) {
+			while (fgets(line, sizeof(line), pf)) {
+				char *save = NULL;
+				char *tok;
+				(void)strtok_r(line, " \t", &save);  /* sl */
+				tok = strtok_r(NULL, " \t", &save);   /* local_address */
+				if (tok && strstr(tok, want)) {
+					have_client = 1;
+					break;
+				}
+			}
+			fclose(pf);
+		}
+	}
+	if (have_client) {
+		printf("[v6] 检测到系统 DHCPv6 客户端已在监听 UDP 546,"
+		       "不再启动竞争进程, 等待内核自行完成\n");
+		return;
+	}
+
 	char cmd[640];
 	pid_t pid;
 
@@ -310,6 +345,17 @@ static void spawn_renew(const char *dev)
 #endif
 	pid = fork();
 	if (pid == 0) {
+		/* 默认静默子进程, 不把 rdisc6/dhcpcd 输出混进我们的日志;
+		 * 需要排障时设 X3C_RENEW_DEBUG=1 放行其输出 */
+		if (!getenv("X3C_RENEW_DEBUG")) {
+			int dn = open("/dev/null", O_RDWR);
+			if (dn >= 0) {
+				dup2(dn, STDOUT_FILENO);
+				dup2(dn, STDERR_FILENO);
+				if (dn > STDERR_FILENO)
+					close(dn);
+			}
+		}
 		execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
 		_exit(127);
 	}
@@ -376,7 +422,7 @@ void x3c_v6kick_tick(x3c_v6kick_t *st, pcap_t *h,
 
 	if (elapse >= V6_RENEW_AT && !st->renewed) {
 		st->renewed = 1;
-		printf("[v6] 仍只有链路本地地址, 尝试触发系统 DHCPv6 续租\n");
+		printf("[v6] 仍只有链路本地地址, 尝试触发系统续租机制\n");
 		spawn_renew(dev);
 	}
 

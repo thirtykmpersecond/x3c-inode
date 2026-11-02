@@ -2,6 +2,29 @@
 
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1-rc.4] - 2026-11-03
+
+### 修复（Linux IPv6 续租兜底）
+基于 Ubuntu 24.04 Live 实网日志：
+- **避免与系统 DHCPv6 客户端抢端口**：续租前读取 `/proc/net/udp6` 检测
+  UDP6 546 是否已被系统客户端（dhcpcd/dhclient/systemd-networkd 等）
+  监听；已占用则不再 fork 竞争的 dhcpcd/dhclient（否则报
+  `dhcp6_openudp: Address already in use`、`... exited unexpectedly`
+  并以 `...timed out` 退出），仅依赖已注入的 RS——系统客户端收到 RA 后
+  会自行完成 DHCPv6。Live 环境下即走此路径，地址由系统协议栈正常安装。
+- **静音续租子进程**：POSIX 侧 rdisc6/dhclient/dhcpcd 的 stdout/stderr
+  默认重定向到 `/dev/null`，不再把第三方程序输出与客户端心跳点号混在
+  同一行造成"客户端报错"的误解（Windows 侧本就已静音）；需要排障时设
+  环境变量 `X3C_RENEW_DEBUG=1` 可放行子进程输出。
+
+### 验证
+- Ubuntu Live（musl 全静态二进制，`eno1` = I217-LM）实网：Start→Identity→
+  明文密码→Success 秒级完成；3 个 RS 后系统 dhcpcd 经 RA 安装全局地址
+  `2001:da8:e801:fafa:...` 与默认路由，客户端 21s 内检测到并结束；
+  Success 后无无谓重认证。
+- glibc 动态与 musl 静态两种构建 `-Wall -Wextra` 均零警告；546 端口探测
+  逻辑用模拟监听核对 `/proc/net/udp6` 格式通过。
+
 ## [1.1.1-rc.3] - 2026-11-02
 
 ### 修复
@@ -122,6 +145,8 @@
 - `-M 1`（部分高校变体）为推测实现，未经实网验证。
 - Linux 分支未经真实 H3C 网络验证。
 
+[1.1.1-rc.3]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.3
+[1.1.1-rc.4]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.4
 [1.1.1-rc.3]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.3
 [1.1.1-rc.2]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.2
 [1.1.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.0

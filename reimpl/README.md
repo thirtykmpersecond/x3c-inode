@@ -144,10 +144,15 @@ Ctrl-C 会发送 EAPOL-Logoff 再退出。
 3. Windows 实测在 IA 已 release 等状态下仅收到 RA 不会重启 DHCPv6，
    因此第 10 秒（Linux/macOS 第 20 秒）仍只有链路本地地址时，后台执行一次
    系统原生命令（Windows `ipconfig /renew6`，Linux 依次尝试
-   `rdisc6`/`dhclient -6`/`dhcpcd -6`，macOS `ipconfig set <if> AUTOMATIC-V6`）；
+   `rdisc6`/`dhclient -6`/`dhcpcd -6`，macOS `ipconfig set <if> AUTOMATIC-V6`）。
+   **Linux 执行前会先读 `/proc/net/udp6` 检测 UDP6 546 是否已被系统
+   DHCPv6 客户端占用**——已占用（如 Ubuntu 24.04 Live 自带的 dhcpcd）则
+   不再启动竞争进程，只靠 RS 让系统客户端自行完成，避免
+   `Address already in use`；
 4. 第 40 秒仍无则放弃并打印提示（该网络可能未部署 IPv6）。
 
-排障可设环境变量 `X3C_DUMPV6=1` 转储发出的 RS 原始帧。
+排障可设环境变量 `X3C_DUMPV6=1` 转储发出的 RS 原始帧；
+续租子进程默认静默，设 `X3C_RENEW_DEBUG=1` 可查看其输出。
 注意：**不**在用户态伪造 DHCPv6——租约由内核协议栈维护，伪造报文
 内核不会安装地址/DNS/路由。
 
