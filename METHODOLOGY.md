@@ -136,6 +136,11 @@ Base64 -> 20 字节
   并打出吓人的 `timed out`。fork 前读 `/proc/net/udp6` 看本地 `:0222`
   是否已监听，已监听则只发 RS；外部命令子进程的 stdout/stderr 默认丢
   `/dev/null`（需要时用环境变量放行），避免污染本程序日志。
+- **相对计时一律用单调时钟**（rc.5，Live 实网日志）：`time(NULL)` 是墙上
+  时钟，Live 系统 NTP 对时会把它往回拨约 8 小时（双系统硬件钟存本地时间，
+  开机被当 UTC），实测打出 `用时 -28779s` 并使后续 RS/续租/放弃调度静默
+  失效。POSIX 用 `clock_gettime(CLOCK_MONOTONIC)`、Windows 用
+  `GetTickCount64()`；x3c 主循环的秒表则由 poll/event 自持，不依赖墙钟。
 
 ## 六、版本区反解脚本
 

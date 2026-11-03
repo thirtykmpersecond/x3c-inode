@@ -372,6 +372,21 @@ void x3c_v6kick_init(x3c_v6kick_t *st, int enabled)
 	st->enabled = enabled;
 }
 
+/* 单调时钟(秒): v6kick 的全部计时必须用它, 不能用 time(NULL)。
+ * 实测 Ubuntu Live(双系统, 硬件钟存本地时间)开机时把时钟当 UTC,
+ * 认证放行 NTP 对时后墙上时钟会回拨约 8 小时, time(NULL) 差值变成
+ * -287xx 秒, 导致 RS/续租/放弃的时间表全部失效。 */
+static int v6_now_s(void)
+{
+#ifdef _WIN32
+	return (int)(GetTickCount64() / 1000);
+#else
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int)ts.tv_sec;
+#endif
+}
+
 void x3c_v6kick_reset(x3c_v6kick_t *st)
 {
 	if (!st || !st->enabled) return;
@@ -386,7 +401,7 @@ void x3c_v6kick_start(x3c_v6kick_t *st)
 {
 	if (!st || !st->enabled || st->state != KS_OFF) return;
 	st->state = KS_ACTIVE;
-	st->t0 = st->last_check = (int)time(NULL);
+	st->t0 = st->last_check = v6_now_s();
 	printf("[v6] 认证成功, 开始检测本机 IPv6 地址配置...\n");
 }
 
@@ -399,7 +414,7 @@ void x3c_v6kick_tick(x3c_v6kick_t *st, pcap_t *h,
 
 	if (!st || !st->enabled || st->state != KS_ACTIVE)
 		return;
-	now = (int)time(NULL);
+	now = v6_now_s();
 	if (now == st->last_check)
 		return;                          /* 1 秒节流 */
 	st->last_check = now;

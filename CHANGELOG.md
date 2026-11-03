@@ -2,6 +2,26 @@
 
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1-rc.5] - 2026-11-03
+
+### 修复
+- **IPv6 催促计时改用单调时钟**（`reimpl/ipv6.c`）。Ubuntu Live（双系统、
+  硬件钟存本地时间）实测：开机时系统时钟被当作 UTC、快约 8 小时，认证放行
+  后 NTP 对时把墙上时钟**往回拨约 28800 秒**，rc.4 及之前用 `time(NULL)`
+  计算的"用时"显示为 **-28779s**，且回拨后第 3 个 RS（14s）、系统续租
+  （20s）、40s 放弃等调度全部被静默解除（本次因地址在跳钟前已由 RA 安装而
+  未表现出故障，但在需要 DHCPv6 续租兜底的网络会失效）。现 POSIX 用
+  `clock_gettime(CLOCK_MONOTONIC)`、Windows 用 `GetTickCount64()`，
+  不受 NTP/手动改时影响。
+- 无协议行为变更；rc.4 的 546 端口探测与子进程静音保留。
+
+### 验证
+- rc.4 Live 日志同时确认：Linux poll 路径认证秒级完成（Start→Identity→
+  明文密码→私有数据→Success 无重试、无超时），Success 后仅心跳点号；
+  RS #1/#2 后内核经 RA 安装全局地址。
+- glibc/musl 双工具链 `-Wall -Wextra` 零警告，musl 静态二进制 dummy 口
+  计时节奏正常。
+
 ## [1.1.1-rc.4] - 2026-11-03
 
 ### 修复（Linux IPv6 续租兜底）
@@ -146,6 +166,7 @@
 - Linux 分支未经真实 H3C 网络验证。
 
 [1.1.1-rc.3]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.3
+[1.1.1-rc.5]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.5
 [1.1.1-rc.4]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.4
 [1.1.1-rc.3]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.3
 [1.1.1-rc.2]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.2
