@@ -2,111 +2,55 @@
 
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.1.1-rc.5] - 2026-11-03
+## [1.1.1] - 2026-11-05
+
+跨平台稳定性修复版本，经 Windows 实网与 Ubuntu Live（musl 全静态二进制）
+实测验证。建议所有用户升级。
 
 ### 修复
-- **IPv6 催促计时改用单调时钟**（`reimpl/ipv6.c`）。Ubuntu Live（双系统、
-  硬件钟存本地时间）实测：开机时系统时钟被当作 UTC、快约 8 小时，认证放行
-  后 NTP 对时把墙上时钟**往回拨约 28800 秒**，rc.4 及之前用 `time(NULL)`
-  计算的"用时"显示为 **-28779s**，且回拨后第 3 个 RS（14s）、系统续租
-  （20s）、40s 放弃等调度全部被静默解除（本次因地址在跳钟前已由 RA 安装而
-  未表现出故障，但在需要 DHCPv6 续租兜底的网络会失效）。现 POSIX 用
-  `clock_gettime(CLOCK_MONOTONIC)`、Windows 用 `GetTickCount64()`，
-  不受 NTP/手动改时影响。
-- 无协议行为变更；rc.4 的 546 端口探测与子进程静音保留。
-
-### 验证
-- rc.4 Live 日志同时确认：Linux poll 路径认证秒级完成（Start→Identity→
-  明文密码→私有数据→Success 无重试、无超时），Success 后仅心跳点号；
-  RS #1/#2 后内核经 RA 安装全局地址。
-- glibc/musl 双工具链 `-Wall -Wextra` 零警告，musl 静态二进制 dummy 口
-  计时节奏正常。
-
-## [1.1.1-rc.4] - 2026-11-03
-
-### 修复（Linux IPv6 续租兜底）
-基于 Ubuntu 24.04 Live 实网日志：
-- **避免与系统 DHCPv6 客户端抢端口**：续租前读取 `/proc/net/udp6` 检测
-  UDP6 546 是否已被系统客户端（dhcpcd/dhclient/systemd-networkd 等）
-  监听；已占用则不再 fork 竞争的 dhcpcd/dhclient（否则报
-  `dhcp6_openudp: Address already in use`、`... exited unexpectedly`
-  并以 `...timed out` 退出），仅依赖已注入的 RS——系统客户端收到 RA 后
-  会自行完成 DHCPv6。Live 环境下即走此路径，地址由系统协议栈正常安装。
-- **静音续租子进程**：POSIX 侧 rdisc6/dhclient/dhcpcd 的 stdout/stderr
-  默认重定向到 `/dev/null`，不再把第三方程序输出与客户端心跳点号混在
-  同一行造成"客户端报错"的误解（Windows 侧本就已静音）；需要排障时设
-  环境变量 `X3C_RENEW_DEBUG=1` 可放行子进程输出。
-
-### 验证
-- Ubuntu Live（musl 全静态二进制，`eno1` = I217-LM）实网：Start→Identity→
-  明文密码→Success 秒级完成；3 个 RS 后系统 dhcpcd 经 RA 安装全局地址
-  `2001:da8:e801:fafa:...` 与默认路由，客户端 21s 内检测到并结束；
-  Success 后无无谓重认证。
-- glibc 动态与 musl 静态两种构建 `-Wall -Wextra` 均零警告；546 端口探测
-  逻辑用模拟监听核对 `/proc/net/udp6` 格式通过。
-
-## [1.1.1-rc.3] - 2026-11-02
-
-### 修复
-- **修复 rc.2 在 Windows/Npcap 上实网认证基本不可用的回归**：rc.2 改用
-  `pcap_getevent()` + `WaitForSingleObject()` 等待报文，但**没有同时设置
-  `pcap_setmintocopy(h, 0)`**。Npcap 内核缓冲默认要攒满 16KB 才置位读事件，
-  802.1X 这种几十字节的稀疏帧可能数分钟才被读到一次——实网表现为首个
-  Request Identity 要约 3 分钟才出现，密码/MD5 挑战帧在 15s 握手窗口内
-  永远等不到，反复 `Wait for handshake package timed out`。
-  现 `pcap_open_live` 成功后立即在 Windows 上调用 `pcap_setmintocopy(h, 0)`
-  （每帧到达即置位事件），恢复 rc.2 之前的即时收发。
-- rc.2 的自管计时器（POSIX poll / Windows event）设计保留，仅补齐其
-  Windows 前置条件。
-
-## [1.1.1-rc.2] - 2026-11-01
-
-> rc.1 标签因强移导致 GitHub Release 残留半残（0 附件、无法被 action 更新），
-> 未正式发布即作废，改发 rc.2。rc.2 后又发现 Windows mintocopy 回归（见
-> rc.3），**Windows 用户请直接使用 rc.3**。
-
-### 修复
-- **从根本上修复 macOS / 新 Linux 认证成功后反复全量重认证的问题**。原代码把
-  "连续 15 次 `pcap_next_ex` 读超时无报文"当作掉线判据，但零流量时的 libpcap
-  读超时是平台相关行为（本机实验确认）：
-  - macOS BPF、Linux TPACKET_V2（旧版 libpcap）：到点返回 0；
-  - **Linux TPACKET_V3（libpcap ≥ 1.5 的默认，覆盖当前主流发行版；本机
-    libpcap 1.10.4 零流量实测阻塞超过 8 秒不返回）、Windows Npcap：首个报文
-    到来前定时器不走，可能无限阻塞**。
-  
-  于是同一个"15 次超时"判据：在 macOS/旧 Linux 上每 ~15 秒误判掉线触发一次
-  全量重认证（日志反复 `Wait for handshake package timed out...`）；在
-  Windows/新 Linux 上则因阻塞"碰巧正常"，但真掉线时又**永远检测不到**。
-- 新增跨平台可中断等待函数 `x3c_wait_frame()`（`reimpl/x3c.c`）：POSIX 侧
-  用 `pcap_get_selectable_fd()` + `poll()`，Windows 侧用
-  `pcap_getevent()` + `WaitForSingleObject()`，**自持 1 秒粒度计时，不再
-  依赖平台相关的 libpcap 读超时**——静默看门狗与 `-6` IPv6 催促的秒表在
-  三平台一致工作（`x3c_wait_frame` 取不到可等待句柄时才退回 `pcap_next_ex`，
-  此时该平台的静默计时会失效，注释中已明确说明这一退化路径）。
-- 认证成功后的静默重连阈值放宽到 **180 秒**（有线 802.1X 无客户端侧心跳要求，
-  多数 H3C 网络 Success 后报文本就稀疏，不能据短暂无帧判掉线；交换机主动
-  重认证会直接发 Identity 请求，照常应答不耽误）；**握手阶段仍为 15 秒**；
-  认证后的静默期不再输出点号。
-- 抓包句柄读错误（`pcap_next_ex` 返回 -1，如网卡被拔出/链路异常）此前被当成
-  静默空转，会在不重建句柄的情况下 goto 回 Start 忙等重发 Start；现直接打印
-  `pcap_geterr()` 错误后退出，交由外部（终端/procd 等）重启。
-- 同样的等待与错误处理用于 Start 等待循环，Windows/Npcap 现在也会每秒重发
-  一次 EAPOL-Start（此前零响应时只发一帧后无限阻塞）。
+- **修复 macOS / 新版 Linux 认证成功后反复全量重认证**。原代码把"连续 15 次
+  `pcap_next_ex` 读超时无报文"当作掉线判据，但零流量时的 libpcap 读超时是
+  平台相关行为：macOS BPF、Linux TPACKET_V2 到点返回 0；而 Linux
+  TPACKET_V3（libpcap ≥ 1.5 默认，实测 1.10.4 零流量阻塞超过 8 秒）与
+  Windows Npcap 在首帧到来前定时器不走、可能无限阻塞。结果同一判据在部分
+  平台每 ~15 秒误判掉线，在另一些平台则永远检测不到真掉线。
+  新增 `x3c_wait_frame()`（`reimpl/x3c.c`）自持 1 秒粒度计时：POSIX 用
+  `pcap_get_selectable_fd()` + `poll()`，Windows 用 `pcap_getevent()` +
+  `WaitForSingleObject()`，三平台行为一致；取不到可等待句柄时才退回
+  `pcap_next_ex`（注释注明该退化路径）。
+- **修复 Windows/Npcap 报文延迟数分钟的回归**：使用 event 等待必须先
+  `pcap_setmintocopy(h, 0)`，否则内核缓冲默认攒满 16KB 才置位读事件，
+  60 字节的稀疏 EAPOL 帧会被拖延数分钟。认证与 `-S` 监听两处打开句柄后
+  均已设置。
+- **IPv6 催促计时改用单调时钟**（`reimpl/ipv6.c`）：原用 `time(NULL)`，
+  在 NTP 对时回拨墙上时钟的机器上（如双系统 Live 环境）会出现
+  `用时 -28779s` 且后续 RS/续租/放弃调度静默失效。现 POSIX 用
+  `clock_gettime(CLOCK_MONOTONIC)`、Windows 用 `GetTickCount64()`。
+- **Linux 续租兜底不再与系统 DHCPv6 客户端抢 UDP 546**：fork 续租命令前
+  读 `/proc/net/udp6` 检测端口是否已被 dhcpcd/dhclient/systemd-networkd
+  占用，已占用则只依赖 RS，不再启动竞争进程（避免
+  `Address already in use`）。
+- **续租子进程默认静音**：rdisc6/dhclient/dhcpcd 的输出重定向到
+  `/dev/null`，不再污染客户端日志；设 `X3C_RENEW_DEBUG=1` 可放行排障。
+- 认证后静默重连阈值放宽到 **180 秒**（握手阶段仍为 15 秒），认证后静默期
+  不输出点号；抓包读错误（返回 -1，如网卡被拔出）改为打印错误后退出，
+  交由外部守护重启，不再带坏句柄 goto 忙等。
 
 ### 工程
-- Release CI：标签名带预发行后缀（标签含 `-`，如 `v1.1.1-rc.2`）时自动将
-  Release 标记为 prerelease（`.github/workflows/release.yml`）。
+- Release CI：标签名带预发行后缀（含 `-`）时自动标记为 prerelease。
 
 ### 验证
-- Linux（Ubuntu 24.04，TPACKET_V3）零流量 dummy 口实测：新代码稳定每秒
-  1 个 tick、约每 12 秒一轮 Start 重试；旧代码在此环境下阻塞、计时完全不走动。
-- 当前环境 `-Wall -Wextra` 编译零警告。
+- Windows 实网（I217-LM + Npcap）：认证秒级完成、Success 后无无谓重认证、
+  心跳点号正常、IPv6 地址自动获取。
+- Ubuntu 24.04 Live（TPACKET_V3，musl 全静态二进制）：poll 计时稳定，
+  RS 后内核经 RA 安装全局地址与默认路由；NTP 回拨场景用时显示正常。
+- 三平台 CI 构建全绿，glibc/musl/MinGW 三种工具链 `-Wall -Wextra` 零警告。
 
 ### 已知限制
-- 180 秒静默判据仍是"无帧"启发式而非链路载波检测；极个别 Success 后永久静默
-  且不允许重认证的网络可把该值调大（暂为硬编码，后续可做成命令行选项）。
-- `-S` 只监听模式仍直接用 `pcap_next_ex`，在 BPF 平台零流量时可能忙等，
-  仅排障用，暂不改动。
+- 180 秒静默判据仍是"无帧"启发式而非链路载波检测；物理拔线等场景最坏需
+  180 秒恢复（载波事件即时重连计划在 1.2.0）。
+- `-S` 只监听模式仍直接用 `pcap_next_ex`，仅排障用。
+- H3C 私有保活（`19 2b 44 2b 32`，需 3DES + 双 MD5 挑战应答）仍未实现。
 
 ## [1.1.0] - 2026-10-28
 
@@ -165,10 +109,6 @@
 - `-M 1`（部分高校变体）为推测实现，未经实网验证。
 - Linux 分支未经真实 H3C 网络验证。
 
-[1.1.1-rc.3]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.3
-[1.1.1-rc.5]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.5
-[1.1.1-rc.4]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.4
-[1.1.1-rc.3]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.3
-[1.1.1-rc.2]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1-rc.2
+[1.1.1]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1
 [1.1.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.0
 [1.0.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.0.0

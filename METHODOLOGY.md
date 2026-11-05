@@ -127,16 +127,15 @@ Base64 -> 20 字节
   自持 1s 计时：POSIX `pcap_get_selectable_fd()`+`poll()`，
   Windows `pcap_getevent()`+`WaitForSingleObject()`。
   pcap 自身的 1s 读超时仍保留作退化路径，但不再承担主计时器。
-- **Windows event 等待必须配 `pcap_setmintocopy(h, 0)`**（rc.2 实网踩坑，
-  rc.3 修复）：Npcap 内核缓冲默认攒满 16KB 才置位读事件，EAPOL 这种
+- **Windows event 等待必须配 `pcap_setmintocopy(h, 0)`**（1.1.1 开发期实网踩坑并修复）：Npcap 内核缓冲默认攒满 16KB 才置位读事件，EAPOL 这种
   几十字节的稀疏帧会被拖延数分钟。该设置要在 `pcap_open_live` 成功后
   立即调用。
-- **DHCPv6 续租兜底不要和系统客户端抢 UDP6 546**（rc.4，Ubuntu 24.04 Live
+- **DHCPv6 续租兜底不要和系统客户端抢 UDP6 546**（1.1.1，Ubuntu 24.04 Live
   实网日志）：系统已跑 dhcpcd 时再 fork 一个会 `Address already in use`
   并打出吓人的 `timed out`。fork 前读 `/proc/net/udp6` 看本地 `:0222`
   是否已监听，已监听则只发 RS；外部命令子进程的 stdout/stderr 默认丢
   `/dev/null`（需要时用环境变量放行），避免污染本程序日志。
-- **相对计时一律用单调时钟**（rc.5，Live 实网日志）：`time(NULL)` 是墙上
+- **相对计时一律用单调时钟**（1.1.1，Live 实网日志）：`time(NULL)` 是墙上
   时钟，Live 系统 NTP 对时会把它往回拨约 8 小时（双系统硬件钟存本地时间，
   开机被当 UTC），实测打出 `用时 -28779s` 并使后续 RS/续租/放弃调度静默
   失效。POSIX 用 `clock_gettime(CLOCK_MONOTONIC)`、Windows 用
