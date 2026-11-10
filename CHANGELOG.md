@@ -2,6 +2,27 @@
 
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.2-rc.1] - 2026-11-10
+
+### 修复（OpenWrt 实测）
+- **v6kick 等待窗口对嵌入式 DHCPv6 客户端过短**：OpenWrt 的 odhcp6c 在
+  802.1X 认证放行前发出的 RS/DHCPv6 请求会被端口丢弃，随后进入指数退避；
+  认证成功后其 DHCPv6 交互可能超过 40 秒才完成，而旧版固定 40 秒即报
+  "该网络可能未部署 IPv6" 并停止催促（实测地址稍后确实由 odhcp6c 正常
+  获取，属于误报）。现：
+  - 检测到系统 DHCPv6 客户端（UDP 546 被占用）时，放弃阈值从 40 秒
+    **放宽到 180 秒**，到期提示语改为"停止催促，系统客户端会继续自行
+    获取"，不再误报网络未部署 IPv6；无系统客户端时维持 40 秒；
+  - 初始三帧 RS（1/6/14 秒）之后，**等待期内每 20 秒补发一帧 RS**，
+    避免网关长时间收不到 RS 而不推 RA；
+  - `x3c_v6kick_t` 增加 `sys_client` 状态，记录 546 探测结果。
+
+### 验证
+- 桩模块单测（假 pcap + 真实单调时钟/getifaddrs）：无 546 监听时
+  RS 节奏 1/6/14/34 秒、40 秒 FAIL；模拟 546 占用时正确识别系统客户端、
+  46 秒内保持 ACTIVE 不超时、不启动竞争进程；
+- glibc `-Wall -Wextra` 零警告。
+
 ## [1.1.1] - 2026-11-05
 
 跨平台稳定性修复版本，经 Windows 实网与 Ubuntu Live（musl 全静态二进制）
@@ -109,6 +130,7 @@
 - `-M 1`（部分高校变体）为推测实现，未经实网验证。
 - Linux 分支未经真实 H3C 网络验证。
 
+[1.1.2-rc.1]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.2-rc.1
 [1.1.1]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.1
 [1.1.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.1.0
 [1.0.0]: https://github.com/thirtykmpersecond/x3c-inode/releases/tag/v1.0.0

@@ -50,7 +50,11 @@
 #define V6_RENEW_AT      20
 #endif
 #define V6_GIVEUP_AT     40
+/* 有系统 DHCPv6 客户端(odhcp6c/dhcpcd 等)时, 其认证前的请求会被丢弃并
+ * 进入指数退避, 认证放行后可能要一两分钟才完成 DHCPv6, 故延长等待 */
+#define V6_GIVEUP_SYS    180
 #define V6_RS_COUNT      3
+#define V6_RS_INTERVAL   20   /* 初始三帧之后, 等待期内每 20s 补一帧 RS */
 
 enum { KS_OFF = 0, KS_ACTIVE, KS_OK, KS_FAIL };
 
@@ -275,7 +279,9 @@ static void send_rs(pcap_t *h, const uint8_t mac[6], int idx, const char *dev)
 
 /* ---------- 系统原生 DHCPv6 续租(后台执行, 不阻塞主循环) ---------- */
 
-static void spawn_renew(const char *dev)
+/* 返回 1 = 检测到系统 DHCPv6 客户端已占用 546, 未启动竞争进程;
+ * 返回 0 = 已自行 fork 续租命令(或 Windows 执行了 ipconfig) */
+static int spawn_renew(const char *dev)
 {
 #ifdef _WIN32
 	STARTUPINFOA si;
@@ -296,6 +302,7 @@ static void spawn_renew(const char *dev)
 		CloseHandle(pi.hProcess);
 		printf("[v6] 已在后台执行: %s\n", cmd);
 	}
+	return 0;
 #else
 	/* 系统是否已有 DHCPv6 客户端在监听 UDP6 546?
 	 * 读 /proc/net/udp6: 第 2 列 local_address 形如
@@ -326,8 +333,8 @@ static void spawn_renew(const char *dev)
 	}
 	if (have_client) {
 		printf("[v6] 检测到系统 DHCPv6 客户端已在监听 UDP 546,"
-		       "不再启动竞争进程, 等待内核自行完成\n");
-		return;
+		       "不再启动竞争进程, 等待其自行完成\n");
+		return 1;
 	}
 
 	char cmd[640];
@@ -361,6 +368,7 @@ static void spawn_renew(const char *dev)
 	}
 	if (pid > 0)
 		printf("[v6] 已在后台执行系统续租: %s\n", cmd);
+	return 0;
 #endif
 }
 
@@ -393,6 +401,7 @@ void x3c_v6kick_reset(x3c_v6kick_t *st)
 	st->state = KS_OFF;
 	st->rs_sent = 0;
 	st->renewed = 0;
+	st->sys_client = 0;
 	st->last_check = 0;
 	st->t0 = 0;
 }
@@ -410,7 +419,7 @@ void x3c_v6kick_tick(x3c_v6kick_t *st, pcap_t *h,
 {
 	static const int rs_delays[V6_RS_COUNT] = V6_RS_DELAYS;
 	char addr[INET6_ADDRSTRLEN] = {0};
-	int now, elapse, i;
+	int now, elapse, next_rs_at;
 
 	if (!st || !st->enabled || st->state != KS_ACTIVE)
 		return;
@@ -427,23 +436,36 @@ void x3c_v6kick_tick(x3c_v6kick_t *st, pcap_t *h,
 		return;
 	}
 
-	for (i = 0; i < V6_RS_COUNT; i++) {
-		if (elapse >= rs_delays[i] && st->rs_sent <= i) {
-			send_rs(h, mac, i + 1, dev);
-			st->rs_sent++;
-			break;
-		}
+	/* RS 调度: 前三帧按 1/6/14s, 之后等待期内每 20s 补一帧,
+	 * 防止系统 DHCPv6 客户端(如 OpenWrt odhcp6c)认证前指数退避后
+	 * 长时间不发 RS、网关也不主动推 RA */
+	if (st->rs_sent < V6_RS_COUNT)
+		next_rs_at = rs_delays[st->rs_sent];
+	else
+		next_rs_at = rs_delays[V6_RS_COUNT - 1] +
+			     (st->rs_sent - V6_RS_COUNT + 1) * V6_RS_INTERVAL;
+	if (elapse >= next_rs_at) {
+		send_rs(h, mac, st->rs_sent + 1, dev);
+		st->rs_sent++;
 	}
 
 	if (elapse >= V6_RENEW_AT && !st->renewed) {
 		st->renewed = 1;
 		printf("[v6] 仍只有链路本地地址, 尝试触发系统续租机制\n");
-		spawn_renew(dev);
+		st->sys_client = spawn_renew(dev);
 	}
 
-	if (elapse >= V6_GIVEUP_AT) {
-		printf("[v6] 等待 IPv6 地址超时(%ds), 该网络可能未部署 IPv6\n",
-		       V6_GIVEUP_AT);
-		st->state = KS_FAIL;
+	{
+		int giveup = st->sys_client ? V6_GIVEUP_SYS : V6_GIVEUP_AT;
+		if (elapse >= giveup) {
+			if (st->sys_client)
+				printf("[v6] 等待 %ds 仍未检测到全局地址, "
+				       "停止催促; 系统 DHCPv6 客户端会继续自行获取\n",
+				       giveup);
+			else
+				printf("[v6] 等待 IPv6 地址超时(%ds), "
+				       "该网络可能未部署 IPv6\n", giveup);
+			st->state = KS_FAIL;
+		}
 	}
 }

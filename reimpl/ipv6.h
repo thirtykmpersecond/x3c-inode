@@ -21,6 +21,7 @@ typedef struct x3c_v6kick {
 	int state;
 	int rs_sent;            /* 已发送的 RS 帧数 */
 	int renewed;            /* 是否已调用系统续租 */
+	int sys_client;         /* 检测到系统 DHCPv6 客户端占用 UDP 546 */
 	int last_check;         /* 上次地址配置检测时刻 */
 	int t0;                 /* Success 时刻 */
 } x3c_v6kick_t;
