@@ -23,6 +23,11 @@
   全静态 ARMv7 二进制 `x3c8021x-re-openwrt-armv7`（硬浮点 EABIhf，适用
   ipq40xx/mvebu/sunxi/armsr 等目标，路由器无需 opkg 装 libpcap），Release
   附件由 4 个增至 5 个。
+- `build-macos` runner 从 `macos-14` 迁移到 `macos-15`：GitHub 于 2026-11
+  停用 macos-14 托管镜像，job 会在零步骤、未分配 runner 的情况下秒取消，
+  网页重跑报 `The configuration 'macos-14-arm64-us-default' is not
+  supported`（同期 rustdesk 等多个项目命中同一问题）。arm64 runner 上
+  `-arch arm64 -arch x86_64` 交叉编译通用二进制的方式不变。
 
 ### 验证
 - 桩模块单测（假 pcap + 真实单调时钟/getifaddrs）：无 546 监听时

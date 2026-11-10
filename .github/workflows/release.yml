@@ -60,7 +60,10 @@ jobs:
           path: dist/x3c8021x-re-win64.exe
 
   build-macos:
-    runs-on: macos-14             # arm64 runner, 用 -arch 同时产出 arm64+x86_64
+    # macos-14 托管镜像 2026-11 起被 GitHub 停用(报 "configuration
+    # 'macos-14-arm64-us-default' is not supported", job 零步骤秒取消),
+    # 迁移到 macos-15; arm64 runner 用 -arch 同时产出 arm64+x86_64
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: 编译(通用二进制)
