@@ -80,35 +80,43 @@ jobs:
 
   build-openwrt-armv7:
     runs-on: ubuntu-22.04
-    # musl 全静态 ARMv7(硬浮点 EABIhf), 可直接跑在 OpenWrt armv7 目标
-    # (ipq40xx/mvebu/sunxi/armsr 等), 不依赖目标机 libpcap/musl 版本
+    # OpenWrt 官方 SDK 自带 musl 交叉工具链, 产出全静态 ARMv7(硬浮点
+    # EABIhf)二进制, 可直接跑在 ipq40xx/mvebu/sunxi/armsr 等 armv7 目标,
+    # 不依赖目标机的 libpcap/musl 版本
+    env:
+      SDK_URL: https://downloads.openwrt.org/releases/25.12.6/targets/armsr/armv7/openwrt-sdk-25.12.6-armsr-armv7_gcc-14.3.0_musl_eabi.Linux-x86_64.tar.zst
     steps:
       - uses: actions/checkout@v4
       - name: 安装依赖
-        run: sudo apt-get update && sudo apt-get install -y flex bison
-      - name: 获取 musl.cc ARMv7 交叉工具链
+        run: sudo apt-get update && sudo apt-get install -y flex bison zstd
+      - name: 获取 OpenWrt SDK(官方 musl 工具链)
         run: |
-          curl -fsSL -o /tmp/arm.tgz https://musl.cc/arm-linux-musleabihf-cross.tgz
-          tar xzf /tmp/arm.tgz -C /tmp
-          echo "/tmp/arm-linux-musleabihf-cross/bin" >> "$GITHUB_PATH"
+          curl -fsSL --retry 5 --retry-all-errors -o /tmp/sdk.tar.zst "$SDK_URL"
+          tar --zstd -xf /tmp/sdk.tar.zst -C /tmp
+          TC_DIR="$(dirname "$(echo /tmp/openwrt-sdk-*/staging_dir/toolchain-*/bin/arm-openwrt-linux-*-gcc | head -1)")"
+          echo "$TC_DIR" >> "$GITHUB_PATH"
+          echo "CC=$(echo "$TC_DIR"/arm-openwrt-linux-*-gcc | head -1)" >> "$GITHUB_ENV"
+          "$CC" --version | head -1
       - name: 交叉编译静态 libpcap
         run: |
           curl -fsSLO https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
           tar xf libpcap-1.10.4.tar.gz
           cd libpcap-1.10.4
-          CC=arm-linux-musleabihf-gcc CFLAGS="-Os" \
-            ./configure --host=arm-linux-musleabihf --disable-shared
+          HOST="$(basename "$CC" | sed 's/-gcc$//')"
+          CC="$CC" CFLAGS="-Os" ./configure --host="$HOST" --disable-shared
           make -j2
       - name: 编译客户端(全静态)
         working-directory: reimpl
         run: |
-          make CC=arm-linux-musleabihf-gcc \
+          make CC="$CC" \
                CFLAGS="-Os -Wall -Wextra -static -I$GITHUB_WORKSPACE/libpcap-1.10.4" \
                LIBS="$GITHUB_WORKSPACE/libpcap-1.10.4/libpcap.a"
           mkdir -p ../dist
           cp x3c8021x-re ../dist/x3c8021x-re-openwrt-armv7
       - name: 校验
-        run: file dist/x3c8021x-re-openwrt-armv7
+        run: |
+          file dist/x3c8021x-re-openwrt-armv7
+          ! readelf -d dist/x3c8021x-re-openwrt-armv7 | grep -q NEEDED
       - uses: actions/upload-artifact@v4
         with:
           name: x3c8021x-re-openwrt-armv7
