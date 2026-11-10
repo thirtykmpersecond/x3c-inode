@@ -114,6 +114,9 @@ jobs:
           make CC="$CC" \
                CFLAGS="-Os -Wall -Wextra -static -I$GITHUB_WORKSPACE/libpcap-1.10.4" \
                LIBS="$GITHUB_WORKSPACE/libpcap-1.10.4/libpcap.a"
+          # 用工具链自带 strip 瘦身(嵌入式目标), 约 959KB -> 300KB
+          STRIP="$(dirname "$CC")/$(basename "$CC" | sed 's/-gcc$/-strip/')"
+          "$STRIP" x3c8021x-re
           mkdir -p ../dist
           cp x3c8021x-re ../dist/x3c8021x-re-openwrt-armv7
       - name: 校验
