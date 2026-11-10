@@ -26,13 +26,23 @@ EAP type 0x07 明文密码、私有多播地址等）。
 ### 下载预编译版本
 
 GitHub Release 由 CI 自动构建（打 `v*` 标签触发），提供 Linux x86_64、
-Windows x64、macOS 通用二进制（arm64 + x86_64）及 SHA256 校验和：
+Windows x64、macOS 通用二进制（arm64 + x86_64）、OpenWrt ARMv7 静态版
+及 SHA256 校验和：
 
 → [Releases 页面](https://github.com/thirtykmpersecond/x3c-inode/releases)
 
 - Windows 仍需安装 [Npcap](https://npcap.com)（勾选 WinPcap API-compatible Mode）；
 - Linux 需系统自带 libpcap（多数发行版默认有，缺则 `sudo apt install libpcap0.8`）；
-- macOS 首次运行如被 Gatekeeper 拦截：`xattr -d com.apple.quarantine x3c8021x-re-macos-universal`。
+- macOS 首次运行如被 Gatekeeper 拦截：`xattr -d com.apple.quarantine x3c8021x-re-macos-universal`；
+- **OpenWrt（`x3c8021x-re-openwrt-armv7`）**：musl 全静态二进制（ARMv7 硬浮点
+  EABIhf，适用 ipq40xx/mvebu/sunxi/armsr 等目标），scp 到路由器后 `chmod +x`
+  即可运行，无需 opkg 安装 libpcap：
+  ```sh
+  scp x3c8021x-re-openwrt-armv7 root@192.168.10.1:/usr/sbin/x3c8021x-re
+  ssh root@192.168.10.1 'chmod +x /usr/sbin/x3c8021x-re'
+  # 前台试跑(认证网卡按实际填写, 通常为 eth0/pppoe-wan 之外的 WAN 口)
+  ssh root@192.168.10.1 '/usr/sbin/x3c8021x-re -u 用户名 -p 密码 -I eth0'
+  ```
 
 ### 编译
 

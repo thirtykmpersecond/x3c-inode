@@ -1,6 +1,6 @@
 name: build-release
 
-# 打 v 开头的标签(如 v1.1.0)即自动三平台编译并发布 Release;
+# 打 v 开头的标签(如 v1.1.0)即自动四平台编译并发布 Release(含 OpenWrt ARMv7 静态版);
 # 标签带预发行后缀(含'-', 如 v1.2.0-rc.1 / v2.0.0-beta.1)则标记为 prerelease;
 # 也可在 Actions 页面手动 Run workflow(只产出构建产物, 不发 Release)。
 on:
@@ -78,10 +78,46 @@ jobs:
           name: x3c8021x-re-macos-universal
           path: dist/x3c8021x-re-macos-universal
 
+  build-openwrt-armv7:
+    runs-on: ubuntu-22.04
+    # musl 全静态 ARMv7(硬浮点 EABIhf), 可直接跑在 OpenWrt armv7 目标
+    # (ipq40xx/mvebu/sunxi/armsr 等), 不依赖目标机 libpcap/musl 版本
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: sudo apt-get update && sudo apt-get install -y flex bison
+      - name: 获取 musl.cc ARMv7 交叉工具链
+        run: |
+          curl -fsSL -o /tmp/arm.tgz https://musl.cc/arm-linux-musleabihf-cross.tgz
+          tar xzf /tmp/arm.tgz -C /tmp
+          echo "/tmp/arm-linux-musleabihf-cross/bin" >> "$GITHUB_PATH"
+      - name: 交叉编译静态 libpcap
+        run: |
+          curl -fsSLO https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
+          tar xf libpcap-1.10.4.tar.gz
+          cd libpcap-1.10.4
+          CC=arm-linux-musleabihf-gcc CFLAGS="-Os" \
+            ./configure --host=arm-linux-musleabihf --disable-shared
+          make -j2
+      - name: 编译客户端(全静态)
+        working-directory: reimpl
+        run: |
+          make CC=arm-linux-musleabihf-gcc \
+               CFLAGS="-Os -Wall -Wextra -static -I$GITHUB_WORKSPACE/libpcap-1.10.4" \
+               LIBS="$GITHUB_WORKSPACE/libpcap-1.10.4/libpcap.a"
+          mkdir -p ../dist
+          cp x3c8021x-re ../dist/x3c8021x-re-openwrt-armv7
+      - name: 校验
+        run: file dist/x3c8021x-re-openwrt-armv7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x3c8021x-re-openwrt-armv7
+          path: dist/x3c8021x-re-openwrt-armv7
+
   release:
-    # 只有打标签才发布 Release; 手动触发时上面三个构建仍会产出 artifact
+    # 只有打标签才发布 Release; 手动触发时上面四个构建仍会产出 artifact
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-windows, build-macos, build-openwrt-armv7]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +130,8 @@ jobs:
           cp artifacts/x3c8021x-re-linux-x86_64/x3c8021x-re-linux-x86_64 dist/
           cp artifacts/x3c8021x-re-win64/x3c8021x-re-win64.exe dist/
           cp artifacts/x3c8021x-re-macos-universal/x3c8021x-re-macos-universal dist/
-          chmod +x dist/x3c8021x-re-linux-x86_64 dist/x3c8021x-re-macos-universal
+          cp artifacts/x3c8021x-re-openwrt-armv7/x3c8021x-re-openwrt-armv7 dist/
+          chmod +x dist/x3c8021x-re-linux-x86_64 dist/x3c8021x-re-macos-universal dist/x3c8021x-re-openwrt-armv7
           cd dist
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
@@ -105,6 +142,7 @@ jobs:
             dist/x3c8021x-re-linux-x86_64
             dist/x3c8021x-re-win64.exe
             dist/x3c8021x-re-macos-universal
+            dist/x3c8021x-re-openwrt-armv7
             dist/SHA256SUMS.txt
           generate_release_notes: true
           # 语义化版本预发行标识在 '-' 之后(rc/beta/alpha), 据此自动判定
@@ -114,6 +152,7 @@ jobs:
             - `x3c8021x-re-linux-x86_64`：Linux x86_64（需系统已装 libpcap，如 `sudo apt install libpcap0.8`）
             - `x3c8021x-re-win64.exe`：Windows x64（需先安装 [Npcap](https://npcap.com) 并勾选 WinPcap API 兼容模式，以管理员身份运行）
             - `x3c8021x-re-macos-universal`：macOS Apple Silicon + Intel（首次运行若被拦截：`xattr -d com.apple.quarantine x3c8021x-re-macos-universal`）
+            - `x3c8021x-re-openwrt-armv7`：OpenWrt ARMv7（musl 全静态，硬浮点 EABIhf；`scp` 到路由器后 `chmod +x` 直接运行，无需 opkg 装 libpcap）
             - `SHA256SUMS.txt`：各文件 SHA-256 校验和
 
             用法见 README。

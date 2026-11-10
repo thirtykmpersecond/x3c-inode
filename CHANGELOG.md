@@ -17,11 +17,18 @@
     避免网关长时间收不到 RS 而不推 RA；
   - `x3c_v6kick_t` 增加 `sys_client` 状态，记录 546 探测结果。
 
+### 工程
+- CI 新增 `build-openwrt-armv7` job：musl.cc `arm-linux-musleabihf` 交叉
+  工具链 + 源码静态编译 libpcap，产出 musl 全静态 ARMv7 二进制
+  `x3c8021x-re-openwrt-armv7`（硬浮点 EABIhf，适用 ipq40xx/mvebu/sunxi/
+  armsr 等目标，路由器无需 opkg 装 libpcap），Release 附件由 4 个增至 5 个。
+
 ### 验证
 - 桩模块单测（假 pcap + 真实单调时钟/getifaddrs）：无 546 监听时
   RS 节奏 1/6/14/34 秒、40 秒 FAIL；模拟 546 占用时正确识别系统客户端、
   46 秒内保持 ACTIVE 不超时、不启动竞争进程；
-- glibc `-Wall -Wextra` 零警告。
+- ARMv7 交叉编译在本机按 CI 同款步骤实测通过（ELF 32-bit ARM EABI5，
+  static-pie，strip 后约 305 KB）；glibc `-Wall -Wextra` 零警告。
 
 ## [1.1.1] - 2026-11-05
 
